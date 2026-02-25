@@ -6,14 +6,16 @@ TODO :
 - outputFormatter.py : contains outputFormatter class, and all the code to format the output excel file
 - matchingProductivities.py : contains MatchingProductivities class, and all the code to match the productivities
 
-2. Add 'details' option
+2. Add 'details' for productivity calcul 
+
 
 3. Extend previsions to 8x
 
 
-V1 - 24/02/2026
+V2 - 25/02/2026
 
 Relyes on "Reports/Report.xlsb", "Abaque/Abaque.xlsm", 'OutputTemplate.xlsx'
+Cached in Processed_Exception_report.xlsx, articleCachedProductivities.txt
 '''
 
 
@@ -24,6 +26,8 @@ import time
 
 'Excel formatter dependecy'
 from openpyxl import load_workbook
+from openpyxl.styles import Font
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 
 '''
 
@@ -90,8 +94,8 @@ class MatchingProductivities:
                 lines = f.readlines()
                 articleCachedProductivities = {}
                 for line in lines:
-                    article, prod = line.strip().split(":")
-                    articleCachedProductivities[int(article)] = float(prod)
+                    article, prod, details, level = line.strip().split(":")
+                    articleCachedProductivities[int(article)] = [float(prod), details, int(level)]
                 print("Loaded cached productivities from file: ", articleCachedProductivities)
                 return articleCachedProductivities
         else:
@@ -100,15 +104,15 @@ class MatchingProductivities:
     def saveCachedProductivities(self):
         if self.cacheFile == None or self.cacheFile == "":
             return
+        
+        
         # Save cached productivities to a file
         with open(self.cacheFile, "w") as f:
             for article, prod in self.articleCachedProductivities.items():
-                f.write(f"{int(article)}:{round(float(prod), 2)}\n")
+                f.write(f"{int(article)}:{round(float(prod[0]), 2)}:{prod[1]}:{prod[2]}\n")
 
 
     def matchProductivities(self):
-        #print("Matching Productivities...")
-
         '''
         Exception Report Columns: Sales Document | Material | Plant | Last Updated 
         | Sold-to party | Name of sold-to party | Price Partner | Name of Price partner 
@@ -182,8 +186,6 @@ class MatchingProductivities:
         | Flag Coverage FG | Week No Covered by Stock SSC | Flag Coverage Stock SSC | RTS Horizon W+8 | Concat PLANT RM | yy | 
 
         '''
-        
-        
         '''
         Abaque Columns: OF | Prod T/h/OF | Bandes (/OF) | Scindage (/OF) | Date 1 
         | Temps 1 (h) | Année 1 | Tonnes | heures | Épaisseur Nominal | Largeur 
@@ -191,15 +193,20 @@ class MatchingProductivities:
         | Clients | Articles |
         '''
 
-        #print(self.abaqueDf.columns)
-
+        
         # add a column to exceptionReportDf called "Productivity" and fill it with -1
         self.exceptionReportDf["Productivity"] = -1
         
+        # add a column named Abaque Indexes that stores abaques Indexes
+        self.exceptionReportDf["Abaque Indexes"] = ""
+
+
         subIndex=0
         for index, row in self.exceptionReportDf.iterrows():
-            prod, level = self.getProductivityForRow(index, row)
+            prod, details, level = self.getProductivityForRow(index, row)
             self.exceptionReportDf.at[index, "Productivity"] = round(float(prod), 2)
+            self.exceptionReportDf.at[index, "Abaque Indexes"] = str(details) + "#" + str(level)
+            
             print(f"Row {subIndex} / {index} / {len(self.exceptionReportDf)} level: {level}, Prod: {round(float(prod), 2)}")
             if subIndex % 20 == 0:
                 self.saveCachedProductivities()
@@ -212,125 +219,181 @@ class MatchingProductivities:
         articleReport = int(row["Material"])
         clientReport = row["Name of sold-to party"]
         salesTypeReport = row["Sales Type"]
+        
         dim1Report = row["Length"]
         dim2Report = row["Width"]
         dim3Report = row["Thickness"]
+        dim1Report = round(float(dim1Report), 2)
+        dim2Report = round(float(dim2Report), 2)
+        dim3Report = round(float(dim3Report), 2)
+
+        self.curentDetails = []
+        self.curentProductivity = -1
 
         if articleReport in self.articleCachedProductivities:
-            return self.articleCachedProductivities[articleReport], "Cached"
+            return self.articleCachedProductivities[articleReport][0], self.articleCachedProductivities[articleReport][1], self.articleCachedProductivities[articleReport][2]
 
-        prod = -1 
-        level0 = self.filterLevel0(articleReport)
-        if level0 != -1:
-            prod = level0
-            self.articleCachedProductivities[articleReport] = prod
-            return prod, 0
+
+
+        self.filterLevel0(articleReport)
+        if self.curentProductivity != -1:
+            self.articleCachedProductivities[articleReport] = [round(float(self.curentProductivity), 2), self.curentDetails, 0]
+            return round(float(self.curentProductivity), 2), self.curentDetails, 0
         
 
         
-        level1 = self.filterLevel1(clientReport, salesTypeReport, dim1Report, dim2Report, dim3Report)
-        if level1 != -1:
-            prod = level1
-            self.articleCachedProductivities[articleReport] = prod
-            return round(float(prod), 2), 1
+        self.filterLevel1(clientReport, salesTypeReport, dim1Report, dim2Report, dim3Report)
+        if self.curentProductivity != -1:
+            self.articleCachedProductivities[articleReport] = [round(float(self.curentProductivity), 2), self.curentDetails, 1]
+            return round(float(self.curentProductivity), 2), self.curentDetails, 1
         
-        level2 = self.filterLevel2(clientReport, salesTypeReport, dim3Report)
-        if level2 != -1:
-            prod = level2
-            self.articleCachedProductivities[articleReport] = prod
-            return round(float(prod), 2), 2
-    
-        level3 = self.filterLevel3(clientReport, salesTypeReport)
-        if level3 != -1:
-            prod = level3
-            self.articleCachedProductivities[articleReport] = prod
-            return round(float(prod), 2), 3
+        
+        self.filterLevel2(clientReport, salesTypeReport, dim3Report)
+        if self.curentProductivity != -1:
+            self.articleCachedProductivities[articleReport] = [round(float(self.curentProductivity), 2), self.curentDetails, 2]
+            return round(float(self.curentProductivity), 2), self.curentDetails, 2
+        
+
+        self.filterLevel3(clientReport, salesTypeReport)
+        if self.curentProductivity != -1:
+            self.articleCachedProductivities[articleReport] = [round(float(self.curentProductivity), 2), self.curentDetails, 3]
+            return round(float(self.curentProductivity), 2), self.curentDetails, 3
+        
         
         oldLineReport = row["Routing"]
-
-        level4 = self.filterLevel4(oldLineReport, salesTypeReport)
-        if level4 != -1:
-            prod = level4
-            self.articleCachedProductivities[articleReport] = prod
-            return round(float(prod), 2), 4
+        self.filterLevel4(oldLineReport, salesTypeReport)
+        if self.curentProductivity != -1:
+            self.articleCachedProductivities[articleReport] = [round(float(self.curentProductivity), 2), self.curentDetails, 4]
+            return round(float(self.curentProductivity), 2), self.curentDetails, 4
         
+
+
         print("Absolutly no match for row ", index, articleReport, clientReport, salesTypeReport, dim1Report, dim2Report, dim3Report, oldLineReport)
-        self.articleCachedProductivities[articleReport] = -1
-        return -1, -1
+        self.articleCachedProductivities[articleReport] = [-1, self.curentDetails, -1]
+        return -1, self.curentDetails, -1
         
-
     def isProtoName(self, protoReport):
         if protoReport == "AM Prototype Order" or protoReport == "AM Free Prototype":
             return 'VRAI'
         return 'FAUX'
 
-
     def filterLevel0(self, article):
         potentialProd = []
+        self.curentDetails = []
 
         for index, row in self.abaqueDf.iterrows():
             try:
                 if str(int(article)) in str(row["Articles"]):
                     potentialProd.append(row["Prod T/h/OF"])
+                    self.curentDetails.append(index)
             except:
                 pass
 
         if len(potentialProd) > 0:
-            return sum(potentialProd)/len(potentialProd)
-        return -1
+            self.curentProductivity = sum(potentialProd)/len(potentialProd)
+        else:
+            self.curentProductivity = - 1
     
     def filterLevel1(self, name, proto, dim1, dim2, dim3):
         potentialProd = []
+        self.curentDetails = []
 
         for index, row in self.abaqueDf.iterrows():
             try:
-                if str(name) in str(row["Clients"]) and self.isProtoName(proto) == str(row["Proto"]) and str(dim1) == str(row["Épaisseur Nominal"]) and str(dim2) == str(row["Largeur"]) and str(dim3) == str(row["Longueur"]):
+                b1 = str(name) in str(row["Clients"])
+                
+                if self.isProtoName(proto) == 'VRAI':
+                    b2 = int(row["Proto"]) == 1
+                else:
+                    b2 = int(row["Proto"]) == 0
+
+                
+                b3 = dim1 == round(float(row["Épaisseur Nominal"]), 2)
+                b4 = dim2 == round(float(row["Largeur"]), 2)
+                b5 = dim3 == round(float(row["Longueur"]), 2)
+
+                if b1 and b2 and b3 and b4 and b5:
                     potentialProd.append(row["Prod T/h/OF"])
+                    self.curentDetails.append(index)
             except:
                 pass
 
         if len(potentialProd) > 0:
-            return sum(potentialProd)/len(potentialProd)
-        return -1
-    
+            self.curentProductivity = sum(potentialProd)/len(potentialProd)
+        else:
+            self.curentProductivity = -1
+           
     def filterLevel2(self, name, proto, dim1):
         potentialProd = []
+        self.curentDetails = []
 
         for index, row in self.abaqueDf.iterrows():
             try:
-                if str(name) in str(row["Clients"]) and self.isProtoName(proto) == str(row["Proto"]) and str(dim1) == str(row["Épaisseur Nominal"]):
+                b1 = str(name) in str(row["Clients"])
+                
+                if self.isProtoName(proto) == 'VRAI':
+                    b2 = int(row["Proto"]) == 1
+                else:
+                    b2 = int(row["Proto"]) == 0
+
+                
+                b3 = dim1 == round(float(row["Épaisseur Nominal"]), 2)
+
+
+                if b1 and b2 and b3:
                     potentialProd.append(row["Prod T/h/OF"])
+                    self.curentDetails.append(index)
             except:
                 pass
 
         if len(potentialProd) > 0:
-            return sum(potentialProd)/len(potentialProd)
-        return -1
+            self.curentProductivity = sum(potentialProd)/len(potentialProd)
+        else:
+            self.curentProductivity = -1
     
     def filterLevel3(self, name, proto):
         potentialProd = []
+        self.curentDetails = []
 
         for index, row in self.abaqueDf.iterrows():
             try:
-                if str(name) in str(row["Clients"]) and self.isProtoName(proto) == str(row["Proto"]):
+                b1 = str(name) in str(row["Clients"])
+                
+                if self.isProtoName(proto) == 'VRAI':
+                    b2 = int(row["Proto"]) == 1
+                else:
+                    b2 = int(row["Proto"]) == 0
+
+                
+
+                if b1 and b2:
                     potentialProd.append(row["Prod T/h/OF"])
+                    self.curentDetails.append(index)
             except:
                 pass
 
         if len(potentialProd) > 0:
-            return sum(potentialProd)/len(potentialProd)
-        return -1
-    
+            self.curentProductivity = sum(potentialProd)/len(potentialProd)
+        else:
+            self.curentProductivity = -1
+        
     def filterLevel4(self, oldLine, proto):
+        self.curentDetails = []
+
         if self.isProtoName(proto) == 'VRAI':
             if oldLine in oldLines:
-                return avgLineProto[oldLines.index(oldLine)]
+                self.curentDetails = "Average of line " + str(oldLine) + " for proto articles in abaque"
+                self.curentProductivity = avgLineProto[oldLines.index(oldLine)]
+                return
         else:
             if oldLine in oldLines:
-                return avgLineSerie[oldLines.index(oldLine)]
+                self.curentDetails = "Average of line " + str(oldLine) + " for serie articles in abaque"
+                self.curentProductivity = avgLineSerie[oldLines.index(oldLine)]
+                return
             
-        return -1
-
+        self.curentDetails = "No average line data for " + str(oldLine) + " proto" + str(proto) 
+        self.curentProductivity = -1
+            
 class excelHandler:
     '''
     Opens and get dataframe from Exception_report.xlsb
@@ -345,16 +408,29 @@ class excelHandler:
 
     
     '''
-    def __init__(self, exceptionReportPath, abaquePath, plantName, cacheFile="articleCachedProductivities.txt"):
+    def __init__(self, exceptionReportPath, abaquePath, plantName, cacheFile="articleCachedProductivities.txt", bypassCalculs=False):
         self.exceptionReportPath = exceptionReportPath
         self.abaquePath = abaquePath
         self.plantName = plantName
         self.cacheFile = cacheFile
 
-        
-        mP = MatchingProductivities(self.getExceptionReportDf(), self.getAbaqueDf(), self.cacheFile)
-        self.newExceptionReportDf = mP.exceptionReportDf
-        self.processExceptionReport()
+        self.bypassCalculs = bypassCalculs
+        self.abaqueDF = self.getAbaqueDf()
+
+
+        if bypassCalculs:
+            self.newDf = pd.read_excel(r"C:\Users\Rafael\Desktop\bots\AMCS\bots_previsions\semaine_postes\V1\Processed_Exception_report.xlsx")
+            
+
+            #self.build_details()
+        else:
+            self.exceptionReportDF = self.getExceptionReportDf()
+            
+
+            mP = MatchingProductivities(self.exceptionReportDF, self.abaqueDF, self.cacheFile)
+            self.newExceptionReportDf = mP.exceptionReportDf
+    
+            self.processExceptionReport()
 
     def getExceptionReportDf(self):
         t1 = time.time()
@@ -372,12 +448,17 @@ class excelHandler:
         print("recuperation of : ", self.abaquePath)
         df = pd.read_excel(self.abaquePath)
         print("recuperation done in : ", time.time() - t1)
+        print(df.head())
+        print("Abaque length : ", len(df))
+        
         return df
 
     def processExceptionReport(self):
-        
+        '''
+            Create Postes columns, and format routing and proto
+        '''
 
-        intressingFields = ["Routing", "Material", "Productivity", "Forecast W", "Forecast W1", "Forecast W2", "Forecast W3", "Forecast W4", "Forecast W5", "Forecast W6", "Forecast W7", "Forecast W8", "Backlog"]
+        intressingFields = ["Name of sold-to party", "Abaque Indexes", "Routing", "Material", "Productivity", "Forecast W", "Forecast W1", "Forecast W2", "Forecast W3", "Forecast W4", "Forecast W5", "Forecast W6", "Forecast W7", "Forecast W8", "Backlog", "Thickness", "Width", "Length"]
     
         calculatedFields = ["Forecast W", "Forecast W1", "Forecast W2", "Forecast W3", "Forecast W4", "Forecast W5", "Forecast W6", "Forecast W7", "Forecast W8", "Backlog"]
         for field in calculatedFields:
@@ -399,11 +480,71 @@ class excelHandler:
         print("Number of lines after processing: ", len(newDf))
 
 
+
+
         # Create a table with each routing, and subdividing it in proto or not, and 1 column Sum of forecast W
         
-        #newDf.to_excel("Processed_Exception_report.xlsx", index=False)
+        newDf.to_excel("Processed_Exception_report.xlsx", index=False)
         self.newDf = newDf
         
+
+    '''    def build_details(self):
+ 
+        600 ref relevent Exception report 
+
+
+        
+
+
+
+        # Analyze the newDf to get insights on the data, like number of lines per routing, number of lines per proto or not, average forecast W per routing and proto or not, etc...
+        uniqueDetails = self.newDf["Details"].unique()
+
+        print("Number of unique abaque references in details: ", len(uniqueDetails))
+
+        
+        
+        print("Numer of uniqueDetails level 0 ", len([self.detail for self.detail in uniqueDetails if self.detail.endswith("#0")]))
+        print("Numer of uniqueDetails level 1 ", len([self.detail for self.detail in uniqueDetails if self.detail.endswith("#1")]))
+        print("Numer of uniqueDetails level 2 ", len([self.detail for self.detail in uniqueDetails if self.detail.endswith("#2")]))
+        print("Numer of uniqueDetails level 3 ", len([self.detail for self.detail in uniqueDetails if self.detail.endswith("#3")]))
+        print("Numer of uniqueDetails level 4 ", len([self.detail for self.detail in uniqueDetails if self.detail.endswith("#4")]))
+        print("Numer of uniqueDetails level -1 ", len([self.detail for self.detail in uniqueDetails if self.detail.endswith("#-1")]))
+
+
+        self.reduceAbaqueIndexes(uniqueDetails[0])
+
+    def reduceAbaqueIndexes(self, uD):
+        try:
+            abaqueIndexes = str(uD).replace(' ', '').replace("[", "").replace("]", "").split("#")[0].split(",")
+            # convert to int
+            abaqueIndexes = [int(index) for index in abaqueIndexes if index != ""]
+
+            print(len(abaqueIndexes), " abaque indexes for details ")
+
+            if len(abaqueIndexes) > 10:
+                # ResumeMode
+                abaquePart = self.abaqueDF[self.abaqueDF.index.isin(abaqueIndexes)]
+                print("len(abaquePart) before reduction: ", len(abaquePart))
+
+                # Keep only top 3, bottom 3 and 3 around the average productivity
+                abaquePart = abaquePart.sort_values(by="Prod T/h/OF", ascending=False)
+                top3 = abaquePart.head(3)
+                bottom3 = abaquePart.tail(3)
+                middle4 = abaquePart.iloc[len(abaquePart)//2 - 2:len(abaquePart)//2 + 2]
+
+                print("Indexes kept for details  : ", top3.index.tolist() + bottom3.index.tolist() + middle4.index.tolist())
+                return newPart
+
+        except Exception as e:
+            print("Under 10 abaque indexes, no need to reduce ", uD, " : ", e)
+        
+        return uD 
+    '''
+
+        
+
+
     def get_newDf(self):
         return self.newDf
     
@@ -418,16 +559,23 @@ class excelHandler:
         return True
 
 class outputFormatter:
-    def __init__(self, df):
+    def __init__(self, df, abaqueDF):
         self.df = df
+        self.abaqueDF = abaqueDF
         
         self.outputExcel()
 
-    def outputExcel(self, template_path="OutputTemplate.xlsx"):
+    def outputExcel(self, template_path=r"C:\Users\Rafael\Desktop\bots\AMCS\bots_previsions\semaine_postes\V1\OutputTemplate.xlsx"):
         # Create a table with each routing, and subdividing it in proto or not, and 1 column Sum of forecast W
         
         wb = load_workbook(template_path)
-        ws = wb.active
+        #clear Details sheet
+        ws = wb["Details"]
+        ws.delete_rows(1, ws.max_row)
+
+
+
+        ws = wb["Resultats"]
 
         start_row = 5  # L1 total starts here
         current_row = start_row
@@ -437,10 +585,50 @@ class outputFormatter:
         columnsToSum = ["Backlog (Postes)", "Backlog", "Forecast W (Postes)", "Forecast W", "Forecast W1 (Postes)", "Forecast W1", "Forecast W2 (Postes)", "Forecast W2", "Forecast W3 (Postes)", "Forecast W3", "Forecast W4 (Postes)", "Forecast W4", "Forecast W5 (Postes)", "Forecast W5", "Forecast W6 (Postes)", "Forecast W6", "Forecast W7 (Postes)", "Forecast W7", "Forecast W8 (Postes)", "Forecast W8"]
         summary = self.df.groupby(["New Routing", "Is Proto"]).agg({col: "sum" for col in columnsToSum}).reset_index()
 
+        self.detailIndex = 0
+        self.curentDetailRow = 2
+
+        self.needsNewDesc = True
+        self.lastDetailRow = -1
+
         # Write summary data to Excel
         for index, row in summary.iterrows():
             for i, col in enumerate(columnsToSum):
-                ws.cell(row=current_row, column=2 + i).value = round(float(row[col]), 2)
+                cell = ws.cell(row=current_row, column=2 + i)
+                value = round(float(row[col]), 2)
+
+                cell.value = value
+                cell.font = Font(color="000000")
+
+                isPostes = True if "(Postes)" in col else False
+                tonnesColName = col.replace(" (Postes)", "") if isPostes else col 
+                postesColName = col if isPostes else col + " (Postes)"
+                if row[tonnesColName] == 0 and row[postesColName] == 0:
+                    cell.hyperlink = None
+                    continue
+
+
+                self.needsNewDesc = "Postes" in col 
+
+                # Hyperlien interne vers une cellule précise
+                if self.needsNewDesc:
+                    cell.hyperlink = f"#Details!C{self.curentDetailRow}"
+                else:
+                    cell.hyperlink = f"#Details!C{self.lastDetailRow}"
+                self.lastDetailRow = self.curentDetailRow
+                
+                
+
+                rootingIndex = newLines.index(row["New Routing"]) if row["New Routing"] in newLines else -1
+                protoIndex = 1 if row["Is Proto"] == 'VRAI' else 0
+                if self.needsNewDesc:
+                    self.createDetail(rootingIndex, protoIndex, isPostes, col, wb)
+
+
+
+                # go back to Resultats sheet
+                ws = wb["Resultats"]
+
             
             if current_row %3 == 0:
                 current_row=current_row+1
@@ -459,14 +647,191 @@ class outputFormatter:
             ws.cell(row=16, column=2 + i).value = round(float(summary[summary["New Routing"] == "R6"][col].sum()), 2)
 
 
+        self.summary=summary
+        wb.calculation.fullCalcOnLoad = True
+
+        # set active cell to be on sheet 1
+        ws = wb["Resultats"]
+        ws.sheet_view.selection[0].active_cell = "G20"
+        ws.sheet_view.selection[0].sqref = "G20"
+
 
         wb.save(template_path)
+        
+
+
+        
+
+    def createDetail(self, rootingIndex, protoIndex, isPostes, col, wb):
+        # keep in potentialDetails the details of the lines in newDf that have the same routing and proto or not
+        potentialDetails = self.df[self.df.apply(lambda row: (row["New Routing"] == newLines[rootingIndex]) and ((row["Is Proto"] == 'VRAI') if protoIndex == 1 else (row["Is Proto"] == 'FAUX')), axis=1)]
+        
+        
+
+
+        self.potentialDetails = potentialDetails
+
+        tonnesColName = col.replace(" (Postes)", "") if isPostes else col 
+        postesColName = col if isPostes else col + " (Postes)"
+
+
+        # Go to Details sheet
+        ws = wb["Details"]
+        protoText = "proto" if protoIndex == 1 else "serie"
+        postesText = "Postes" if isPostes else "Tonnes"
+
+        self.start_block_row = self.curentDetailRow
+        ws.cell(row=self.curentDetailRow, column=3).value = "Details for : " + newLines[rootingIndex] + " "+ protoText + " - " + postesText + " " + col.replace(" (Postes)", "")
+        ws.cell(row=self.curentDetailRow, column=4).value = "Article : Client - Length x Width x Thickness" 
+        ws.cell(row=self.curentDetailRow, column=5).value = "Postes" 
+        ws.cell(row=self.curentDetailRow, column=6).value = "Tonnes" 
+        ws.cell(row=self.curentDetailRow, column=7).value = "Productivity" 
+
+        ws.cell(row=self.curentDetailRow+1, column=3).value = "Sum Tonnes : " + str(round(float(potentialDetails[tonnesColName].sum()), 2)) 
+        ws.cell(row=self.curentDetailRow+2, column=3).value = "Sum Postes : " + str(round(float(potentialDetails[postesColName].sum()), 2))
+        ws.cell(row=self.curentDetailRow+3, column=3).value = "Average Productivity : " + str(round(float(potentialDetails["Productivity"].mean()), 2))
+
+        self.curentDetailRow=self.curentDetailRow+1
+
+
+        
+        realOutput = 0
+
+        for index, row in potentialDetails.iterrows():
+            #if postes + tonnes = 0 then skip the line
+            if float(row[tonnesColName]) == 0 and float(row[postesColName]) == 0:
+                continue
+
+            self.productText = str(row["Material"]) + ":" +str(row["Name of sold-to party"]) + " - " + str(row["Length"]) + "x" + str(row["Width"]) + "x" + str(row["Thickness"])
+            realOutput = realOutput + 1
+
+
+            ws.cell(row=self.curentDetailRow, column=4).value = self.productText
+            
+
+
+            ws.cell(row=self.curentDetailRow, column=5).value = row[postesColName] # Postes
+            ws.cell(row=self.curentDetailRow, column=6).value = row[tonnesColName] # Tonnes
+            ws.cell(row=self.curentDetailRow, column=7).value = round(float(row["Productivity"]), 2) # Productivity
+
+
+
+            self.curentDetailRow=self.curentDetailRow+1
+
+
+        self.end_block_row = self.curentDetailRow - 1
+        if realOutput <= 3:
+            self.end_block_row = self.start_block_row + 3
+            
+        self.Colorizer(self.start_block_row, self.end_block_row, ws)
+
+        self.curentDetailRow=self.curentDetailRow+3
+        if realOutput <= 3:
+            self.curentDetailRow=self.start_block_row + 7
+
+                
+    def Colorizer(self, start_row, end_row, ws):
+        # ===== Styles =====
+        header_fill = PatternFill("solid", fgColor="D9E1F2")
+        summary_fill = PatternFill("solid", fgColor="F2F2F2")
+        max_fill = PatternFill("solid", fgColor="C6EFCE")
+        min_fill = PatternFill("solid", fgColor="FFC7CE")
+
+        bold_font = Font(bold=True)
+
+        thin = Side(style="thin")
+        thick = Side(style="medium")
+
+        thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+        # ===== Apply thin borders everywhere inside block =====
+        for r in range(start_row, end_row + 1):
+            for c in range(3, 8):
+                ws.cell(row=r, column=c).border = thin_border
+
+        # ===== Header styling =====
+        for c in range(3, 8):
+            cell = ws.cell(row=start_row, column=c)
+            cell.fill = header_fill
+            cell.font = bold_font
+
+        # ===== Summary styling (next 3 rows in column 3 only) =====
+        for r in range(start_row + 1, start_row + 4):
+            ws.cell(row=r, column=3).fill = summary_fill
+
+        # ===== Highlight Productivity max / min =====
+        tonnes_values = []
+
+        for r in range(start_row + 1, end_row + 1):
+            val = ws.cell(row=r, column=6).value
+            if isinstance(val, (int, float)):
+                tonnes_values.append(val)
+
+        if tonnes_values:
+            max_tonnes = max(tonnes_values)
+            min_tonnes = min(tonnes_values)
+
+            for r in range(start_row + 1, end_row + 1):
+                cell = ws.cell(row=r, column=6)
+
+                if cell.value == min_tonnes:
+                    # color all line in red if min_tonnes, and set font to bold
+                    for c in range(4, 8):
+                        ws.cell(row=r, column=c).fill = min_fill
+                        ws.cell(row=r, column=c).font = bold_font
+
+                if cell.value == max_tonnes:
+                    # color all line in green if max_tonnes, and set font to bold
+                    for c in range(4, 8):
+                        ws.cell(row=r, column=c).fill = max_fill
+                        ws.cell(row=r, column=c).font = bold_font
+
+                
+
+        # ===== Thick outside border =====
+        for c in range(3, 8):
+            ws.cell(row=start_row, column=c).border = Border(
+                top=thick,
+                left=thick if c == 3 else thin,
+                right=thick if c == 7 else thin
+            )
+
+            ws.cell(row=end_row, column=c).border = Border(
+                bottom=thick,
+                left=thick if c == 3 else thin,
+                right=thick if c == 7 else thin
+            )
+
+        for r in range(start_row, end_row + 1):
+            ws.cell(row=r, column=3).border = Border(left=thick)
+            ws.cell(row=r, column=7).border = Border(right=thick, top=thin, bottom=thin)
+
+    
+        #Add thick border on the left of column 3, and on the right of column 7, and on the top of the header, and on the bottom of the last line
+        for c in range(3, 8):
+            if c == 3:
+                ws.cell(row=start_row, column=c).border = Border(top=thick, left=thick, right=thick)
+                ws.cell(row=end_row, column=c).border = Border(bottom=thick, left=thick, right=thick)
+                for row in range(start_row+1, end_row):
+                    ws.cell(row=row, column=c).border = Border(left=thick, right=thick)
+            elif c == 7:
+                ws.cell(row=start_row, column=c).border = Border(top=thick, right=thick, bottom=thin)
+                ws.cell(row=end_row, column=c).border = Border(bottom=thick, right=thick, top=thin)
+            else:
+                ws.cell(row=start_row, column=c).border = Border(top=thick, left=thin, right=thin)
+                ws.cell(row=end_row, column=c).border = Border(bottom=thick, left=thin, right=thin)
 
 
 
 
-eH = excelHandler("Reports/Report.xlsb", "Abaque/Abaque.xlsm", "WOIPPY")
+
+        
+    
+
+
+
+eH = excelHandler(r"C:\Users\Rafael\Desktop\bots\AMCS\bots_previsions\semaine_postes\V1\Reports\Report.xlsb", r"C:\Users\Rafael\Desktop\bots\AMCS\bots_previsions\semaine_postes\V1\Abaque\Abaque.xlsm", "WOIPPY", bypassCalculs=False)
 df = eH.get_newDf()
 # Read Processed_Exception_report.xlsx and stor it in a dataframe
-outputFormatter(df)
+outputFormatter(df, eH.abaqueDF)
 
