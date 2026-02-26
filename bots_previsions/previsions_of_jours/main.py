@@ -4,6 +4,11 @@
 3. Trouver les prods correspondents
 4. Extraire le nombre de postes aujourd'hui
 5. Prédire le nombre d'OF réalisé en fonction du nombre  de postes 
+
+
+
+Todo : Trouver le poids, depuis SAP liste OF / machine
+
 '''
 import os
 import time 
@@ -45,11 +50,11 @@ class MatchingProductivities:
 
     '''
             
-    def __init__(self, Prevision_ligne_Df, abaqueDf, ligne, cacheFile="articleCachedProductivities.txt"):
+    def __init__(self, Prevision_ligne_Df, abaqueDf, ligne, cacheFile="articleCachedProductivities"):
         self.exceptionReportDf = Prevision_ligne_Df
         self.abaqueDf = abaqueDf
         self.ligne = ligne
-        self.cacheFile = cacheFile
+        self.cacheFile = cacheFile + "_" + ligne + ".txt"
 
         self.articleCachedProductivities = self.loadArticleCachedProductivities()
 
@@ -174,16 +179,31 @@ class MatchingProductivities:
             'VM Sous-catégorie produit', 'Prématériel.1', 'Client1.1'],
              dtype='object'
         '''
+        print(self.exceptionReportDf.head(8))
         
+
+
         self.exceptionReportDf["Routing"] = self.ligne
         self.exceptionReportDf["Material"] = self.exceptionReportDf["Article1"]
         self.exceptionReportDf["Name of sold-to party"] = self.exceptionReportDf["Client1"]
-        self.exceptionReportDf["Sales Type"] = 
-        self.exceptionReportDf["Length"] = self.exceptionReportDf["Longueur"]
-        self.exceptionReportDf["Width"] = self.exceptionReportDf["Largeur"]
-        self.exceptionReportDf["Thickness"] = self.exceptionReportDf["Épaisseur Nominal"]
+        self.exceptionReportDf["Sales Type"] = self.exceptionReportDf["Présence Prototype"]
 
-        return
+        rawFormat = self.exceptionReportDf["FW Format (..x..x..)"].astype(str).str.replace(" mm", "").str.split("x", expand=True)
+        if len(rawFormat.columns) == 2:
+            rawFormat[2] = 0
+
+        for col in rawFormat.columns:
+            for index, value in rawFormat[col].items():
+                try:
+                    rawFormat.at[index, col] = format_number_eu(value, decimals=2)
+                except:
+                    rawFormat.at[index, col] = "0"
+
+        self.exceptionReportDf["Length"] = rawFormat[1]
+        self.exceptionReportDf["Width"] = rawFormat[2]
+        self.exceptionReportDf["Thickness"] = rawFormat[0]
+
+
 
         
         # add a column to exceptionReportDf called "Productivity" and fill it with -1
@@ -208,16 +228,20 @@ class MatchingProductivities:
         return self.exceptionReportDf
 
     def getProductivityForRow(self, index, row):
-        articleReport = int(row["Material"])
-        clientReport = row["Name of sold-to party"]
-        salesTypeReport = row["Sales Type"]
-        
-        dim1Report = row["Length"]
-        dim2Report = row["Width"]
-        dim3Report = row["Thickness"]
-        dim1Report = round(float(dim1Report), 2)
-        dim2Report = round(float(dim2Report), 2)
-        dim3Report = round(float(dim3Report), 2)
+        try:
+            articleReport = int(row["Material"])
+            clientReport = row["Name of sold-to party"]
+            salesTypeReport = row["Sales Type"]
+            
+            dim1Report = row["Length"]
+            dim2Report = row["Width"]
+            dim3Report = row["Thickness"]
+            dim1Report = round(float(dim1Report), 2)
+            dim2Report = round(float(dim2Report), 2)
+            dim3Report = round(float(dim3Report), 2)
+        except:
+            print("Error while parsing row ", index, row["Material"], row["Name of sold-to party"], row["Sales Type"], row["Length"], row["Width"], row["Thickness"])
+            return -1, [], -1
 
         self.curentDetails = []
         self.curentProductivity = -1
@@ -264,14 +288,13 @@ class MatchingProductivities:
         self.articleCachedProductivities[articleReport] = [-1, self.curentDetails, -1]
         return -1, self.curentDetails, -1
         
-
     def isProtoName(self, protoReport):
-        if protoReport == "AM Prototype Order" or protoReport == "AM Free Prototype":
+        if "nan" in str(protoReport)  or protoReport == "" or protoReport == None or  protoReport == "Nan"or  protoReport == "NaN" or protoReport == "NAN":
+            return 'FAUX'
+
+        if protoReport != "":
             return 'VRAI'
         return 'FAUX'
-
-
-
 
     def filterLevel0(self, article):
         potentialProd = []
@@ -308,6 +331,10 @@ class MatchingProductivities:
                 b4 = dim2 == round(float(row["Largeur"]), 2)
                 b5 = dim3 == round(float(row["Longueur"]), 2)
 
+                if b1 and b2 and float(dim1)+float(dim2)+float(dim3) != 0:
+                    print(int(b1), int(b2), int(b3), int(b4), int(b5), "Proto match for row ", index, "name: ", name, "proto: ", proto, "dim1: ", dim1, "dim2: ", dim2, "dim3: ", dim3, "comparing to ", row["Clients"], row["Proto"], row["Épaisseur Nominal"], row["Largeur"], row["Longueur"])
+
+                
                 if b1 and b2 and b3 and b4 and b5:
                     potentialProd.append(row["Prod T/h/OF"])
                     self.curentDetails.append(index)
@@ -398,8 +425,11 @@ class previsions():
         self.prevision_ligne_Df = self.getPrevision_ligne_Df("R6")
         self.abaqueDf = self.getAbaqueDf()
 
-        mP = MatchingProductivities(self.prevision_ligne_Df, self.abaqueDf)
+        mP = MatchingProductivities(self.prevision_ligne_Df, self.abaqueDf, "R6")
         self.mainDF = mP.exceptionReportDf
+
+
+        processDf()
 
 
     def getPrevision_ligne_Df(self, ligne):
@@ -419,5 +449,34 @@ class previsions():
         
         return df
     
+    def processDf(self):
+        self.mainDF["Temps"] = self.mainDF.apply(lambda row: round(float(row[]) / float(row["Productivity"]), 2) if row["Productivity"] != -1 and float(row["Productivity"]) != 0 else -1, axis=1)
+
 
 prev = previsions()
+
+
+
+def format_number_eu(value, decimals=2):
+    """
+    Format number with:
+    - '.' as thousands separator
+    - ',' as decimal separator
+    - returns '0' if value is None or empty
+    """
+
+    if value is None or value == "":
+        return "0"
+
+    try:
+        number = float(value)
+    except (ValueError, TypeError):
+        return "0"
+
+    # Format with US style first (1,234.56)
+    formatted = f"{number:,.{decimals}f}"
+
+    # Convert to EU style (1.234,56)
+    formatted = formatted.replace(",", "X").replace(".", ",").replace("X", ".")
+
+    return formatted
