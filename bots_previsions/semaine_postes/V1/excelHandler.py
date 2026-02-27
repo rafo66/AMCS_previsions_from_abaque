@@ -14,7 +14,7 @@ TODO :
 
 V2 - 25/02/2026
 
-Relyes on "Reports/Report.xlsb", "Abaque/Abaque.xlsm", 'OutputTemplate.xlsx'
+Relyes on "Reports/Report.xlsb", "Abaque/Abaque.xlsm", 'OutputTemplate.xlsm'
 Cached in Processed_Exception_report.xlsx, articleCachedProductivities.txt
 '''
 
@@ -438,7 +438,8 @@ class excelHandler:
         print("recuperation of : ", self.exceptionReportPath)
         df = pd.read_excel(self.exceptionReportPath, sheet_name=sheetName)
         print("recuperation done in : ", time.time() - t1)
-        newDf = df[df.apply(lambda row: row.astype(str).str.contains(self.plantName, case=False).any(), axis=1)]
+        # if column C (Plant) contains self.plantName, keep the line, otherwise drop it
+        newDf = df[df["Plant"].str.contains(self.plantName, case=False, na=False)]
         print("filtering done in : ", time.time() - t1)
         print("Time taken: ", time.time() - t1)
         return newDf
@@ -565,10 +566,10 @@ class outputFormatter:
         
         self.outputExcel()
 
-    def outputExcel(self, template_path=r"C:\Users\Rafael\Desktop\bots\AMCS\bots_previsions\semaine_postes\V1\OutputTemplate.xlsx"):
+    def outputExcel(self, template_path=r"C:\Users\Rafael\Desktop\bots\AMCS\bots_previsions\semaine_postes\V1\OutputTemplate.xlsm"):
         # Create a table with each routing, and subdividing it in proto or not, and 1 column Sum of forecast W
         
-        wb = load_workbook(template_path)
+        wb = load_workbook(template_path, keep_vba=True)
         #clear Details sheet
         ws = wb["Details"]
         ws.delete_rows(1, ws.max_row)
