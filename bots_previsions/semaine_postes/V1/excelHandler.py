@@ -39,10 +39,10 @@ Semaine 16-20
 #WOIPPY data : 
 
 
-oldLines =     ["D10", "D10R11", "D14R11", "D20", "D7R10", "FIMI", "FIMIR3B", "L1", "LAS1.", "P3", "R1", "R10", "R11", "R2", "R3B", "R6", "R7", "P3R1"]
-newLines =     ["L1", "L1",      "L1",      "L1", "L1",     "L1",  "L1",      "L1", "LASS1,", "P3", "R1", "R1", "R6", "R6", "R6", "R6", "R1", "P3"]
-avgLineProto = [4.15, 4.15,      4.15,      4.15, 4.15,     4.15, 4.15,        4.15, 0.39,     2.25, 14,   14,   15.8, 15.8, 15.8, 15.8, 14, 2.25]
-avgLineSerie = [6.96, 6.69,      6.69,      6.96, 6.96,     6.96, 6.96,        6.96,  0.7,      2.5, 23.2, 23.2, 39,   39,   39,   39,   23.2,  2.5]
+oldLines =     ["D10", "D10R11", "D14R11", "D20", "D7R10", "FIMI", "FIMIR3B", "FIN","IOWA", "L1", "LAS1.", "P3", "R1", "R10", "R11", "R2", "R3B", "R2B", "R6", "R7", "P3R1"]
+newLines =     ["L1", "L1",      "L1",      "L1", "L1",     "L1",  "L1",      "L1","L1", "L1", "LASS1,", "P3", "R1", "R1", "R6", "R6", "R6", "R6","R6", "R1", "P3"]
+avgLineProto = [4.15, 4.15,      4.15,      4.15, 4.15,     4.15, 4.15,       4.15,4.15, 4.15, 0.39,     2.25, 14,   14,   15.8, 15.8, 15.8, 15.8, 15.8, 14, 2.25]
+avgLineSerie = [6.96, 6.69,      6.69,      6.96, 6.96,     6.96, 6.96,       6.96,6.96,  6.96,  0.7,      2.5, 23.2, 23.2, 39,   39,   39,   39,39,   23.2,  2.5]
 
 class MatchingProductivities:
     '''
@@ -393,6 +393,8 @@ class MatchingProductivities:
             
         self.curentDetails = "No average line data for " + str(oldLine) + " proto" + str(proto) 
         self.curentProductivity = -1
+
+   
             
 class excelHandler:
     '''
@@ -434,7 +436,7 @@ class excelHandler:
 
     def getExceptionReportDf(self):
         t1 = time.time()
-        sheetName = 8
+        sheetName = "Sheet1"
         print("recuperation of : ", self.exceptionReportPath)
         df = pd.read_excel(self.exceptionReportPath, sheet_name=sheetName)
         print("recuperation done in : ", time.time() - t1)
@@ -595,11 +597,18 @@ class outputFormatter:
         # Write summary data to Excel
         for index, row in summary.iterrows():
             for i, col in enumerate(columnsToSum):
+                
+                
+                print("writing to", current_row, 2 + i, summary.at[index, col], "for routing ", row["New Routing"], " proto ", row["Is Proto"], " col ", col)
                 cell = ws.cell(row=current_row, column=2 + i)
                 value = round(float(row[col]), 2)
 
-                cell.value = value
-                cell.font = Font(color="000000")
+                try:
+                    cell.value = value
+                    cell.font = Font(color="000000")
+                except Exception as e:
+                    print("Error setting value for cell:", e, " value: ", value, " routing: ", row["New Routing"], " proto: ", row["Is Proto"], " col: ", col)
+                    continue
 
                 isPostes = True if "(Postes)" in col else False
                 tonnesColName = col.replace(" (Postes)", "") if isPostes else col 
