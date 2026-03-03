@@ -16,10 +16,32 @@ V2 - 25/02/2026
 
 Relyes on "Reports/Report.xlsb", "Abaque/Abaque.xlsm", 'OutputTemplate.xlsm'
 Cached in Processed_Exception_report.xlsx, articleCachedProductivities.txt
+
+
+
+
+On linux : source .env/bin/activate
+
+
+crontab -e
+
+
+# run at 7 am on weekdays
+0 6 * * 1-5 /home/Raftests/AMCS/bots_previsions/semaine_postes/.env/bin/python /home/Raftests/AMCS/bots_previsions/semaine_postes/excelHandler.py >> /home/Raftests/AMCS/bots_previsions/semaine_postes/log.txt 2>&1
+
+# every 10 minutes
+*/10 * * * * /home/Raftests/AMCS/bots_previsions/semaine_postes/.env/bin/python /home/Raftests/AMCS/bots_previsions/semaine_postes/excelHandler.py >> /home/Raftests/AMCS/bots_previsions/semaine_postes/log.txt 2>&1
+
+# with flock to avoid multiple instances
+30 5 * * * flock -n /tmp/excelHandler.lock /home/Raftests/AMCS/bots_previsions/semaine_postes/.env/bin/python /home/Raftests/AMCS/bots_previsions/semaine_postes/excelHandler.py >> /home/Raftests/AMCS/bots_previsions/semaine_postes/log.txt 2>&1
+*/10 * * * * flock -n /tmp/excelHandler.lock /home/Raftests/AMCS/bots_previsions/semaine_postes/.env/bin/python /home/Raftests/AMCS/bots_previsions/semaine_postes/excelHandler.py >> /home/Raftests/AMCS/bots_previsions/semaine_postes/log.txt 2>&1
+
+tail -f log.txt 
 '''
 
 
 
+import datetime
 import os, os.path
 import pandas as pd
 import time
@@ -28,6 +50,7 @@ import time
 from openpyxl import load_workbook
 from openpyxl.styles import Font
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+import sys
 
 '''
 
@@ -79,11 +102,14 @@ class MatchingProductivities:
         self.abaqueDf = abaqueDf
         self.cacheFile = cacheFile
 
-        self.articleCachedProductivities = self.loadArticleCachedProductivities()
+        try:
+            self.articleCachedProductivities = self.loadArticleCachedProductivities()
+        except Exception as e:
+            printerUtil("Error while loading cached productivities: ", e)
+            self.articleCachedProductivities = {}
 
         self.matchProductivities()
-
-    
+ 
     def loadArticleCachedProductivities(self):
         if self.cacheFile == None or self.cacheFile == "":
             return {}
@@ -96,7 +122,7 @@ class MatchingProductivities:
                 for line in lines:
                     article, prod, details, level = line.strip().split(":")
                     articleCachedProductivities[int(article)] = [float(prod), details, int(level)]
-                print("Loaded cached productivities from file: ", articleCachedProductivities)
+                printerUtil("Loaded cached productivities from file ")
                 return articleCachedProductivities
         else:
             return {}
@@ -110,7 +136,6 @@ class MatchingProductivities:
         with open(self.cacheFile, "w") as f:
             for article, prod in self.articleCachedProductivities.items():
                 f.write(f"{int(article)}:{round(float(prod[0]), 2)}:{prod[1]}:{prod[2]}\n")
-
 
     def matchProductivities(self):
         '''
@@ -195,7 +220,7 @@ class MatchingProductivities:
 
         
         # add a column to exceptionReportDf called "Productivity" and fill it with -1
-        self.exceptionReportDf["Productivity"] = -1
+        self.exceptionReportDf["Productivity"] = float(-1)
         
         # add a column named Abaque Indexes that stores abaques Indexes
         self.exceptionReportDf["Abaque Indexes"] = ""
@@ -207,9 +232,12 @@ class MatchingProductivities:
             self.exceptionReportDf.at[index, "Productivity"] = round(float(prod), 2)
             self.exceptionReportDf.at[index, "Abaque Indexes"] = str(details) + "#" + str(level)
             
-            print(f"Row {subIndex} / {index} / {len(self.exceptionReportDf)} level: {level}, Prod: {round(float(prod), 2)}")
-            if subIndex % 20 == 0:
-                self.saveCachedProductivities()
+            if subIndex % 50 == 0:
+                printerUtil(f"Row {subIndex} / {index} / {len(self.exceptionReportDf)} level: {level}, Prod: {round(float(prod), 2)}")
+                try:
+                    self.saveCachedProductivities()
+                except Exception as e:
+                    printerUtil("Error while saving cached productivities: ", e)
 
             subIndex+=1
 
@@ -268,7 +296,7 @@ class MatchingProductivities:
         
 
 
-        print("Absolutly no match for row ", index, articleReport, clientReport, salesTypeReport, dim1Report, dim2Report, dim3Report, oldLineReport)
+        printerUtil("Absolutly no match for row ", index, articleReport, clientReport, salesTypeReport, dim1Report, dim2Report, dim3Report, oldLineReport)
         self.articleCachedProductivities[articleReport] = [-1, self.curentDetails, -1]
         return -1, self.curentDetails, -1
         
@@ -393,9 +421,7 @@ class MatchingProductivities:
             
         self.curentDetails = "No average line data for " + str(oldLine) + " proto" + str(proto) 
         self.curentProductivity = -1
-
-   
-            
+          
 class excelHandler:
     '''
     Opens and get dataframe from Exception_report.xlsb
@@ -410,19 +436,20 @@ class excelHandler:
 
     
     '''
-    def __init__(self, exceptionReportPath, abaquePath, plantName, cacheFile="articleCachedProductivities.txt", bypassCalculs=False):
+    def __init__(self, exceptionReportPath, abaquePath, plantName, cacheFile="articleCachedProductivities.txt", bypassCalculs=False, DF_cacheFile="Processed_Exception_report.xlsx"):
         self.exceptionReportPath = exceptionReportPath
         self.abaquePath = abaquePath
         self.plantName = plantName
         self.cacheFile = cacheFile
+        self.DF_cacheFile = DF_cacheFile
 
         self.bypassCalculs = bypassCalculs
         self.abaqueDF = self.getAbaqueDf()
 
 
         if bypassCalculs:
-            self.newDf = pd.read_excel(r"C:\Users\Rafael\Desktop\bots\AMCS\bots_previsions\semaine_postes\V1\Processed_Exception_report.xlsx")
-            
+            self.newDf = pd.read_excel(self.DF_cacheFile)
+            self.exceptionReportLastModified = os.path.getmtime(self.exceptionReportPath)    
 
             #self.build_details()
         else:
@@ -435,26 +462,26 @@ class excelHandler:
             self.processExceptionReport()
 
     def getExceptionReportDf(self):
-        t1 = time.time()
-        sheetName = "Sheet1"
-        print("recuperation of : ", self.exceptionReportPath)
-        df = pd.read_excel(self.exceptionReportPath, sheet_name=sheetName)
-        print("recuperation done in : ", time.time() - t1)
-        # if column C (Plant) contains self.plantName, keep the line, otherwise drop it
-        newDf = df[df["Plant"].str.contains(self.plantName, case=False, na=False)]
-        print("filtering done in : ", time.time() - t1)
-        print("Time taken: ", time.time() - t1)
-        return newDf
+        #save lastModified date of exceptionReportPath in self.exceptionReportLastModified
+        self.exceptionReportLastModified = os.path.getmtime(self.exceptionReportPath)
+        try:
+            sheetName = "Sheet1"
+            df = pd.read_excel(self.exceptionReportPath, sheet_name=sheetName)
+            newDf = df[df["Plant"].str.contains(self.plantName, case=False, na=False)]
+            return newDf
+        except Exception as e:
+            printerUtil("Error while reading or filtering exception report : ", e)
+            exit(1)
 
     def getAbaqueDf(self):
-        t1 = time.time()
-        print("recuperation of : ", self.abaquePath)
-        df = pd.read_excel(self.abaquePath)
-        print("recuperation done in : ", time.time() - t1)
-        print(df.head())
-        print("Abaque length : ", len(df))
-        
-        return df
+        try:
+            t1 = time.time()
+            df = pd.read_excel(self.abaquePath)        
+            return df
+        except Exception as e:
+            printerUtil("Error while reading abaque : ", e)
+            exit(1)
+
 
     def processExceptionReport(self):
         '''
@@ -477,76 +504,18 @@ class excelHandler:
         newDf = self.newExceptionReportDf[intressingFields + [field + " (Postes)" for field in calculatedFields] + ["New Routing", "Is Proto"]]
         
 
-        print("Number of lines before processing: ", len(newDf))
+        printerUtil("Number of lines before cleanup: ", len(newDf))
         newDf = newDf[newDf.apply(lambda row: all(self.isValid(row[field + " (Postes)"]) for field in calculatedFields), axis=1)]
         newDf = newDf[newDf.apply(lambda row: sum(float(row[field]) for field in calculatedFields) != 0, axis=1)]
-        print("Number of lines after processing: ", len(newDf))
+        printerUtil("Number of lines after cleanup: ", len(newDf))
 
 
 
 
         # Create a table with each routing, and subdividing it in proto or not, and 1 column Sum of forecast W
         
-        newDf.to_excel("Processed_Exception_report.xlsx", index=False)
+        newDf.to_excel(self.DF_cacheFile, index=False)
         self.newDf = newDf
-        
-
-    '''    def build_details(self):
- 
-        600 ref relevent Exception report 
-
-
-        
-
-
-
-        # Analyze the newDf to get insights on the data, like number of lines per routing, number of lines per proto or not, average forecast W per routing and proto or not, etc...
-        uniqueDetails = self.newDf["Details"].unique()
-
-        print("Number of unique abaque references in details: ", len(uniqueDetails))
-
-        
-        
-        print("Numer of uniqueDetails level 0 ", len([self.detail for self.detail in uniqueDetails if self.detail.endswith("#0")]))
-        print("Numer of uniqueDetails level 1 ", len([self.detail for self.detail in uniqueDetails if self.detail.endswith("#1")]))
-        print("Numer of uniqueDetails level 2 ", len([self.detail for self.detail in uniqueDetails if self.detail.endswith("#2")]))
-        print("Numer of uniqueDetails level 3 ", len([self.detail for self.detail in uniqueDetails if self.detail.endswith("#3")]))
-        print("Numer of uniqueDetails level 4 ", len([self.detail for self.detail in uniqueDetails if self.detail.endswith("#4")]))
-        print("Numer of uniqueDetails level -1 ", len([self.detail for self.detail in uniqueDetails if self.detail.endswith("#-1")]))
-
-
-        self.reduceAbaqueIndexes(uniqueDetails[0])
-
-    def reduceAbaqueIndexes(self, uD):
-        try:
-            abaqueIndexes = str(uD).replace(' ', '').replace("[", "").replace("]", "").split("#")[0].split(",")
-            # convert to int
-            abaqueIndexes = [int(index) for index in abaqueIndexes if index != ""]
-
-            print(len(abaqueIndexes), " abaque indexes for details ")
-
-            if len(abaqueIndexes) > 10:
-                # ResumeMode
-                abaquePart = self.abaqueDF[self.abaqueDF.index.isin(abaqueIndexes)]
-                print("len(abaquePart) before reduction: ", len(abaquePart))
-
-                # Keep only top 3, bottom 3 and 3 around the average productivity
-                abaquePart = abaquePart.sort_values(by="Prod T/h/OF", ascending=False)
-                top3 = abaquePart.head(3)
-                bottom3 = abaquePart.tail(3)
-                middle4 = abaquePart.iloc[len(abaquePart)//2 - 2:len(abaquePart)//2 + 2]
-
-                print("Indexes kept for details  : ", top3.index.tolist() + bottom3.index.tolist() + middle4.index.tolist())
-                return newPart
-
-        except Exception as e:
-            print("Under 10 abaque indexes, no need to reduce ", uD, " : ", e)
-        
-        return uD 
-    '''
-
-        
-
 
     def get_newDf(self):
         return self.newDf
@@ -562,13 +531,14 @@ class excelHandler:
         return True
 
 class outputFormatter:
-    def __init__(self, df, abaqueDF):
+    def __init__(self, df, abaqueDF, tp=r"OutputTemplate.xlsm", exceptionReportLastModified=None):
         self.df = df
         self.abaqueDF = abaqueDF
+        self.exceptionReportLastModified = exceptionReportLastModified
         
-        self.outputExcel()
+        self.outputExcel(template_path=tp)
 
-    def outputExcel(self, template_path=r"C:\Users\Rafael\Desktop\bots\AMCS\bots_previsions\semaine_postes\V1\OutputTemplate.xlsm"):
+    def outputExcel(self, template_path):
         # Create a table with each routing, and subdividing it in proto or not, and 1 column Sum of forecast W
         
         wb = load_workbook(template_path, keep_vba=True)
@@ -599,7 +569,7 @@ class outputFormatter:
             for i, col in enumerate(columnsToSum):
                 
                 
-                print("writing to", current_row, 2 + i, summary.at[index, col], "for routing ", row["New Routing"], " proto ", row["Is Proto"], " col ", col)
+                #printerUtil("writing to", current_row, 2 + i, summary.at[index, col], "for routing ", row["New Routing"], " proto ", row["Is Proto"], " col ", col)
                 cell = ws.cell(row=current_row, column=2 + i)
                 value = round(float(row[col]), 2)
 
@@ -607,7 +577,7 @@ class outputFormatter:
                     cell.value = value
                     cell.font = Font(color="000000")
                 except Exception as e:
-                    print("Error setting value for cell:", e, " value: ", value, " routing: ", row["New Routing"], " proto: ", row["Is Proto"], " col: ", col)
+                    printerUtil("Error setting value for cell:", e, " value: ", value, " routing: ", row["New Routing"], " proto: ", row["Is Proto"], " col: ", col)
                     continue
 
                 isPostes = True if "(Postes)" in col else False
@@ -665,8 +635,23 @@ class outputFormatter:
         ws.sheet_view.selection[0].active_cell = "G20"
         ws.sheet_view.selection[0].sqref = "G20"
 
+        # write to F1 the last modified date of the exception report
+        if self.exceptionReportLastModified != None:
+            # add one to the hour to be in the right timezone
+            self.exceptionReportLastModified = self.exceptionReportLastModified + 3600
+            lastModifiedDate = datetime.datetime.fromtimestamp(self.exceptionReportLastModified).strftime('%Y-%m-%d %H:%M:%S')
+            ws.cell(row=1, column=6).value = "Exception Report from : " + lastModifiedDate
 
+            updateTime = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # add 1 to hour 
+            updateTime = datetime.datetime.strptime(updateTime, '%Y-%m-%d %H:%M:%S') + datetime.timedelta(hours=1)
+            
+            ws.cell(row=1, column=8).value = "Updated at : " + updateTime.strftime('%Y-%m-%d %H:%M:%S')
+            
+
+        printerUtil("Saving output file...")
         wb.save(template_path)
+        printerUtil("Output file saved.")
         
 
 
@@ -835,13 +820,74 @@ class outputFormatter:
 
 
 
-        
+
+
     
+WINDOWS_REPORT_PATH = r"Reports\Report.xlsb"
+WINDOWS_ABAQUE_PATH = r"Abaque\Abaque.xlsm"
+WINDOWS_CACHE_FILE = r"Cache\articleCachedProductivities.txt"
+WINDOWS_DF_CACHE_FILE = r"Cache\Processed_Exception_report.xlsx"
+WINDOWS_OUTPUT_TEMPLATE = r"OutputTemplate.xlsm"
+
+LINUX_PREFIX = r"/home/Raftests/AMCS/bots_previsions/semaine_postes/"
+LINUX_REPORT_PATH = r"Reports/Report.xlsb"
+LINUX_ABAQUE_PATH = r"Abaque/Abaque.xlsm"
+
+LINUX_CACHE_FILE = r"Cache/articleCachedProductivities.txt"
+LINUX_DF_CACHE_FILE = r"Cache/Processed_Exception_report.xlsx"
+LINUX_OUTPUT_TEMPLATE = r"OutputTemplate.xlsm"
 
 
+if os.name == 'nt':  # Windows
+    report_path = WINDOWS_REPORT_PATH
+    abaque_path = WINDOWS_ABAQUE_PATH
+    output_template = WINDOWS_OUTPUT_TEMPLATE
+    df_cache_file = WINDOWS_DF_CACHE_FILE
+    cache_file = WINDOWS_CACHE_FILE
+    
+else:  # Linux or other
+    report_path = LINUX_PREFIX + LINUX_REPORT_PATH
+    abaque_path = LINUX_PREFIX + LINUX_ABAQUE_PATH
+    output_template = LINUX_PREFIX + LINUX_OUTPUT_TEMPLATE
+    df_cache_file = LINUX_PREFIX + LINUX_DF_CACHE_FILE
+    cache_file = LINUX_PREFIX + LINUX_CACHE_FILE
 
-eH = excelHandler(r"C:\Users\Rafael\Desktop\bots\AMCS\bots_previsions\semaine_postes\V1\Reports\Report.xlsb", r"C:\Users\Rafael\Desktop\bots\AMCS\bots_previsions\semaine_postes\V1\Abaque\Abaque.xlsm", "WOIPPY", bypassCalculs=False)
-df = eH.get_newDf()
-# Read Processed_Exception_report.xlsx and stor it in a dataframe
-outputFormatter(df, eH.abaqueDF)
 
+def printerUtil(*messages):
+    print("[excelHandler] ", time.strftime("%Y-%m-%d %H:%M:%S"), " - ", " ".join(str(msg) for msg in messages))
+
+
+def clearCache():
+    if os.path.exists(cache_file):
+        os.remove(cache_file)
+        printerUtil(f"Cleared: {cache_file}")
+    if os.path.exists(df_cache_file):
+        os.remove(df_cache_file)
+        printerUtil(f"Cleared: {df_cache_file}")
+
+
+def main():
+    bypassCalculs = True
+
+    if len(sys.argv) > 1:
+        if sys.argv[1].lower() == "--DoNotBypass":
+            printerUtil("Not bypassing calculations and using cached data...")
+            bypassCalculs = False
+        elif sys.argv[1].lower() == "--clear":
+            printerUtil("Clearing cache files...")
+            clearCache()
+        elif sys.argv[1].lower() == "--help":
+            printerUtil("Usage: python excelHandler.py [OPTIONS]")
+            printerUtil("\nOptions:")
+            printerUtil("  --DoNotBypass    Dont Skip calculations and use cached data")
+            printerUtil("  --clear     Clear all cache files")
+            printerUtil("  --help      Show this help message")
+            return
+        
+    printerUtil("Starting excelHandler bypass caluls: ", bypassCalculs)
+    eH = excelHandler(report_path, abaque_path, "WOIPPY", bypassCalculs=False, cacheFile=cache_file, DF_cacheFile=df_cache_file)
+    df = eH.get_newDf()
+    outputFormatter(df, eH.abaqueDF, tp=output_template, exceptionReportLastModified=eH.exceptionReportLastModified)
+
+if __name__ == "__main__":
+    main()
