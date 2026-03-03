@@ -6,13 +6,27 @@ TODO :
 - outputFormatter.py : contains outputFormatter class, and all the code to format the output excel file
 - matchingProductivities.py : contains MatchingProductivities class, and all the code to match the productivities
 
-2. Add 'details' for productivity calcul 
 
 
-3. Extend previsions to 8x
+
+V0 - 03/03/2026
 
 
-V2 - 25/02/2026
+
+1. Backlog : 
+(Hire Work) & (Backlog > 20) & (forecast_sum == 0)
+
+2. Nouvel Abaque sur les prédictions :  
+L1 : +20%
+R1&R6 : +5%
+P3: -20%
+LAS: -35%
+Par rapport à la réalitée 
+
+
+
+
+
 
 Relyes on "Reports/Report.xlsb", "Abaque/Abaque.xlsm", 'OutputTemplate.xlsm'
 Cached in Processed_Exception_report.xlsx, articleCachedProductivities.txt
@@ -52,20 +66,19 @@ from openpyxl.styles import Font
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 import sys
 
-'''
-
-S8
-Semaine 16-20
-
-'''
         
 #WOIPPY data : 
-
-
 oldLines =     ["D10", "D10R11", "D14R11", "D20", "D7R10", "FIMI", "FIMIR3B", "FIN","IOWA", "L1", "LAS1.", "P3", "R1", "R10", "R11", "R2", "R3B", "R2B", "R6", "R7", "P3R1"]
 newLines =     ["L1", "L1",      "L1",      "L1", "L1",     "L1",  "L1",      "L1","L1", "L1", "LASS1,", "P3", "R1", "R1", "R6", "R6", "R6", "R6","R6", "R1", "P3"]
 avgLineProto = [4.15, 4.15,      4.15,      4.15, 4.15,     4.15, 4.15,       4.15,4.15, 4.15, 0.39,     2.25, 14,   14,   15.8, 15.8, 15.8, 15.8, 15.8, 14, 2.25]
 avgLineSerie = [6.96, 6.69,      6.69,      6.96, 6.96,     6.96, 6.96,       6.96,6.96,  6.96,  0.7,      2.5, 23.2, 23.2, 39,   39,   39,   39,39,   23.2,  2.5]
+
+
+
+
+VERSION = 0.1
+CURENT_TIME_ZONE = "Europe/Paris"
+
 
 class MatchingProductivities:
     '''
@@ -231,6 +244,9 @@ class MatchingProductivities:
             prod, details, level = self.getProductivityForRow(index, row)
             self.exceptionReportDf.at[index, "Productivity"] = round(float(prod), 2)
             self.exceptionReportDf.at[index, "Abaque Indexes"] = str(details) + "#" + str(level)
+
+            #if 'LAS' in str(row["Routing"]):
+            #    printerUtil("Row ", index, " with article ", row["Material"], " and routing ", row["Routing"], " got productivity ", prod, " with details ", details, " and match level ", level)
             
             if subIndex % 50 == 0:
                 printerUtil(f"Row {subIndex} / {index} / {len(self.exceptionReportDf)} level: {level}, Prod: {round(float(prod), 2)}")
@@ -445,6 +461,11 @@ class excelHandler:
 
         self.bypassCalculs = bypassCalculs
         self.abaqueDF = self.getAbaqueDf()
+        try:
+            self.filterAbaque()
+        except Exception as e:
+            printerUtil("Error filtering abaque: ", e)
+            exit(1)
 
 
         if bypassCalculs:
@@ -454,7 +475,12 @@ class excelHandler:
             #self.build_details()
         else:
             self.exceptionReportDF = self.getExceptionReportDf()
-            
+
+            try:
+                self.filterFalseBacklog()
+            except Exception as e:
+                printerUtil("Error filtering false backlog: ", e)
+                exit(1)
 
             mP = MatchingProductivities(self.exceptionReportDF, self.abaqueDF, self.cacheFile)
             self.newExceptionReportDf = mP.exceptionReportDf
@@ -473,6 +499,34 @@ class excelHandler:
             printerUtil("Error while reading or filtering exception report : ", e)
             exit(1)
 
+    def filterFalseBacklog(self):
+        # Exclude some backlog lines:
+        # If Sales Type contains "Hire Work" AND Backlog > 100 AND sum(Forecast W..W8) == 0 => set Backlog to 0
+        forecast_cols = [f"Forecast W{i}" if i else "Forecast W" for i in range(0, 9)]
+
+        # Ensure numeric (NaN -> 0) for the computation
+        for c in forecast_cols + ["Backlog"]:
+            if c in self.exceptionReportDF.columns:
+                self.exceptionReportDF[c] = pd.to_numeric(self.exceptionReportDF[c], errors="coerce").fillna(0)
+
+        sales_type = self.exceptionReportDF["Sales Type"].astype(str)
+        forecast_sum = self.exceptionReportDF[forecast_cols].sum(axis=1)
+
+        mask = (
+            sales_type.str.contains("Hire Work", case=False, na=False)
+            & (self.exceptionReportDF["Backlog"] > 20)
+            & (forecast_sum == 0)
+        )
+
+        excluded = int(mask.sum())
+        if excluded:
+            printerUtil(f"Excluding backlog for {excluded} 'Hire Work' lines (Backlog>20 and Forecast sum=0).")
+            self.exceptionReportDF.loc[mask, "Backlog"] = 0
+            printerUtil("Number of lines with Backlog > 0 after cleanup: ", (self.exceptionReportDF["Backlog"] > 0).sum())
+
+
+
+
     def getAbaqueDf(self):
         try:
             t1 = time.time()
@@ -482,6 +536,11 @@ class excelHandler:
             printerUtil("Error while reading abaque : ", e)
             exit(1)
 
+    def filterAbaque(self):
+        # if poste = LAS1 keep only the lines where 2026 is in Année 1 
+        printerUtil("Filtering abaque for LAS1 postes, lines before filter: ", len(self.abaqueDF))
+        self.abaqueDF = self.abaqueDF[~((self.abaqueDF["Poste"] == "LAS1") & (self.abaqueDF["Année 1"] != 2026))]
+        printerUtil("Abaque filtered, number of lines: ", len(self.abaqueDF))
 
     def processExceptionReport(self):
         '''
@@ -638,15 +697,14 @@ class outputFormatter:
         # write to F1 the last modified date of the exception report
         if self.exceptionReportLastModified != None:
             # add one to the hour to be in the right timezone
-            self.exceptionReportLastModified = self.exceptionReportLastModified + 3600
+            self.exceptionReportLastModified = self.exceptionReportLastModified
+            
             lastModifiedDate = datetime.datetime.fromtimestamp(self.exceptionReportLastModified).strftime('%Y-%m-%d %H:%M:%S')
             ws.cell(row=1, column=6).value = "Exception Report from : " + lastModifiedDate
 
-            updateTime = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            # add 1 to hour 
-            updateTime = datetime.datetime.strptime(updateTime, '%Y-%m-%d %H:%M:%S') + datetime.timedelta(hours=1)
+            updateTime = datetime.datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).strftime("%Y-%m-%d %H:%M:%S")
             
-            ws.cell(row=1, column=8).value = "Updated at : " + updateTime.strftime('%Y-%m-%d %H:%M:%S')
+            ws.cell(row=1, column=8).value = "Updated at : " + updateTime
             
 
         printerUtil("Saving output file...")
@@ -822,16 +880,15 @@ class outputFormatter:
 
 
 
-    
 WINDOWS_REPORT_PATH = r"Reports\Report.xlsb"
-WINDOWS_ABAQUE_PATH = r"Abaque\Abaque.xlsm"
+WINDOWS_ABAQUE_PATH = r"Abaque\Abaque 2025-2026.xlsx"
 WINDOWS_CACHE_FILE = r"Cache\articleCachedProductivities.txt"
 WINDOWS_DF_CACHE_FILE = r"Cache\Processed_Exception_report.xlsx"
 WINDOWS_OUTPUT_TEMPLATE = r"OutputTemplate.xlsm"
 
 LINUX_PREFIX = r"/home/Raftests/AMCS/bots_previsions/semaine_postes/"
 LINUX_REPORT_PATH = r"Reports/Report.xlsb"
-LINUX_ABAQUE_PATH = r"Abaque/Abaque.xlsm"
+LINUX_ABAQUE_PATH = r"Abaque/Abaque 2025-2026.xlsx"
 
 LINUX_CACHE_FILE = r"Cache/articleCachedProductivities.txt"
 LINUX_DF_CACHE_FILE = r"Cache/Processed_Exception_report.xlsx"
@@ -854,7 +911,8 @@ else:  # Linux or other
 
 
 def printerUtil(*messages):
-    print("[excelHandler] ", time.strftime("%Y-%m-%d %H:%M:%S"), " - ", " ".join(str(msg) for msg in messages))
+    timeStamp = datetime.datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).strftime("%Y-%m-%d %H:%M:%S")
+    print("[excelHandler] ", timeStamp, " - ", " ".join(str(msg) for msg in messages))
 
 
 def clearCache():
@@ -867,25 +925,25 @@ def clearCache():
 
 
 def main():
-    bypassCalculs = True
+    bypassCalculs = False
 
     if len(sys.argv) > 1:
-        if sys.argv[1].lower() == "--DoNotBypass":
-            printerUtil("Not bypassing calculations and using cached data...")
-            bypassCalculs = False
+        if sys.argv[1] == "--Bypass":
+            printerUtil("Bypassing calculations and using cached data of exception report...")
+            bypassCalculs = True
         elif sys.argv[1].lower() == "--clear":
             printerUtil("Clearing cache files...")
             clearCache()
         elif sys.argv[1].lower() == "--help":
             printerUtil("Usage: python excelHandler.py [OPTIONS]")
             printerUtil("\nOptions:")
-            printerUtil("  --DoNotBypass    Dont Skip calculations and use cached data")
+            printerUtil("  --Bypass    Skip calculations and use cached data")
             printerUtil("  --clear     Clear all cache files")
             printerUtil("  --help      Show this help message")
             return
         
     printerUtil("Starting excelHandler bypass caluls: ", bypassCalculs)
-    eH = excelHandler(report_path, abaque_path, "WOIPPY", bypassCalculs=False, cacheFile=cache_file, DF_cacheFile=df_cache_file)
+    eH = excelHandler(report_path, abaque_path, "WOIPPY", bypassCalculs=bypassCalculs, cacheFile=cache_file, DF_cacheFile=df_cache_file)
     df = eH.get_newDf()
     outputFormatter(df, eH.abaqueDF, tp=output_template, exceptionReportLastModified=eH.exceptionReportLastModified)
 
