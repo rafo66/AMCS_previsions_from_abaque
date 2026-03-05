@@ -9,7 +9,7 @@ TODO :
 
 
 
-V0 - 03/03/2026
+V0.5 - 05/03/2026
 
 
 
@@ -22,6 +22,8 @@ R1&R6 : +5%
 P3: -20%
 LAS: -35%
 Par rapport à la réalitée 
+
+3. Retravailler OutputTemplate
 
 
 
