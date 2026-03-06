@@ -549,7 +549,7 @@ class excelHandler:
             Create Postes columns, and format routing and proto
         '''
 
-        intressingFields = ["Name of sold-to party", "Abaque Indexes", "Routing", "Material", "Productivity", "Forecast W", "Forecast W1", "Forecast W2", "Forecast W3", "Forecast W4", "Forecast W5", "Forecast W6", "Forecast W7", "Forecast W8", "Backlog", "Thickness", "Width", "Length"]
+        intressingFields = ["Name of sold-to party", "Abaque Indexes", "Routing", "Material", "Productivity", "Forecast W", "Forecast W1", "Forecast W2", "Forecast W3", "Forecast W4", "Forecast W5", "Forecast W6", "Forecast W7", "Forecast W8", "Backlog", "Thickness", "Width", "Length", "STOCK_FG_FREE"]
     
         calculatedFields = ["Forecast W", "Forecast W1", "Forecast W2", "Forecast W3", "Forecast W4", "Forecast W5", "Forecast W6", "Forecast W7", "Forecast W8", "Backlog"]
         for field in calculatedFields:
@@ -642,6 +642,11 @@ class outputFormatter:
                     continue
 
                 isPostes = True if "(Postes)" in col else False
+                if isPostes:
+                    cell.value = "=" + str(value) + "/D49"
+               
+
+
                 tonnesColName = col.replace(" (Postes)", "") if isPostes else col 
                 postesColName = col if isPostes else col + " (Postes)"
                 if row[tonnesColName] == 0 and row[postesColName] == 0:
@@ -677,15 +682,64 @@ class outputFormatter:
 
         # write total in column B for backlog postes, and in column C for backlog, and so on for each forecast W
         for i, col in enumerate(columnsToSum):
-            ws.cell(row=current_row-1, column=2 + i).value = round(float(summary[col].sum()), 2)
+            isPostes = True if "(Postes)" in col else False
+            if isPostes:
+                ws.cell(row=current_row-1, column=2 + i).value = "=" + str(round(float(summary[col].sum()), 2)) + "/D49"
+            else:
+                ws.cell(row=current_row-1, column=2 + i).value = round(float(summary[col].sum()), 2)
 
         # write subTotal in line 4, 7, 10, 13, 16, 19, 22, 25, 28, 31 in column B for backlog postes, and in column C for backlog, and so on for each forecast W
         for i, col in enumerate(columnsToSum):
-            ws.cell(row=4, column=2 + i).value = round(float(summary[summary["New Routing"] == "L1"][col].sum()), 2)
-            ws.cell(row=7, column=2 + i).value = round(float(summary[summary["New Routing"] == "LASS1,"][col].sum()), 2)
-            ws.cell(row=10, column=2 + i).value = round(float(summary[summary["New Routing"] == "P3"][col].sum()), 2)
-            ws.cell(row=13, column=2 + i).value = round(float(summary[summary["New Routing"] == "R1"][col].sum()), 2)
-            ws.cell(row=16, column=2 + i).value = round(float(summary[summary["New Routing"] == "R6"][col].sum()), 2)
+            isPostes = True if "(Postes)" in col else False
+
+            rows_and_routings = [
+            (4, "L1"),
+            (7, "LASS1,"),
+            (10, "P3"),
+            (13, "R1"),
+            (16, "R6"),
+            ]
+
+            for row, routing in rows_and_routings:
+                value = round(float(summary[summary["New Routing"] == routing][col].sum()), 2)
+                cell = ws.cell(row=row, column=2 + i)
+                
+                if isPostes:
+                    cell.value = "=" + str(value) + "/D49"
+                else:
+                    cell.value = value
+
+        # STOCK_FG_FREE
+        for forecast_i in range(9):
+            forecastText = "Forecast W" if forecast_i == 0 else "Forecast W" + str(forecast_i)
+
+
+            cellValues = []
+            for i, col in enumerate(pd.unique(self.df["New Routing"])):
+                # sum of Stock FG Free % for each line 
+                sum_line_free = self.df[(self.df["New Routing"] == col) & (self.df[forecastText] != 0)]["STOCK_FG_FREE"].sum()
+                sum_forecast_w = self.df[(self.df["New Routing"] == col) & (self.df[forecastText] != 0)][forecastText].sum()
+                percent = round(float(sum_line_free) / float(sum_forecast_w) * 100, 2) if sum_forecast_w != 0 else 0
+                cellValues.append(float(percent))
+            newOrder = [3, 4, 0, 2, 1]
+            # change order of cells E64 to E68 to be in order of newOrder
+            for i, newIndex in enumerate(newOrder):
+                ws.cell(row=64+i, column=5 + 2*forecast_i).value = str(cellValues[newIndex]) + "%"
+            ws.cell(row=69, column=5 + 2*forecast_i).value = str(round(float(sum(cellValues)/len(cellValues)), 2)) + "%"
+
+
+        #Update text to include week number
+        weekNumber = datetime.datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).isocalendar()[1]
+
+        # write to merged cell D&F 64 : "W"+str(weekNumber)+" Stock FG Free %"
+        for forecast_i in range(9): 
+            ws.cell(row=2, column=4+2*forecast_i).value = "Forecast "+ "W" +str(weekNumber+forecast_i)
+            ws.cell(row=21, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Avance / Retard"
+            ws.cell(row=29, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Total"
+            ws.cell(row=38, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Programmation Semaine"
+            ws.cell(row=53, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Ratrappage Backlog"
+            ws.cell(row=63, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Stock FG Free %"
+
 
 
         self.summary=summary
