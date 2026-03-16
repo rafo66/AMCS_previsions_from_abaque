@@ -34,6 +34,11 @@ The latest exception report format is not parsed correctly:
 
 ### Free FG % above 100% and not relative to next week.
 
+### If an entire line of final output is empty, not sure how it reacts 
+### (lines write total in outputFormatter) (if details are ok)
+
+### Handle Unknwown Routs
+
 
 # LASS Bug
 
@@ -65,18 +70,7 @@ A row is delated from backlog if:
 
 ---
 
-## 2. Prediction Adjustments (New Abaque)
 
-Prediction adjustments relative to real productivity:
-
-| Routing | Adjustment |
-| ------- | ---------- |
-| L1      | +20%       |
-| R1 & R6 | +5%        |
-| P3      | -20%       |
-| LAS     | -35%       |
-
----
 
 # Project Structure (Planned Refactor)
 
@@ -113,10 +107,11 @@ Contains:
 
 ### Functional Improvements
 
-* [ ] Add `clear_last` feature
+* [ ] Add `clear_last` function at the start of the precessus 
 
   * Clear **details table**
   * Clear **global summary table**
+
 
 
 
@@ -127,7 +122,7 @@ Contains:
 The project relies on the following files:
 
 ```
-Reports/Report.xlsb
+Reports/Report.xlsb or Report.xlsx
 Abaque/Abaque.xlsm
 OutputTemplate.xlsm
 ```
@@ -159,22 +154,6 @@ Edit cron jobs:
 
 ```bash
 crontab -e
-```
-
----
-
-## Run at 6:00 on weekdays
-
-```bash
-0 6 * * 1-5 /home/Raftests/AMCS/bots_previsions/semaine_postes/.env/bin/python /home/Raftests/AMCS/bots_previsions/semaine_postes/excelHandler.py >> /home/Raftests/AMCS/bots_previsions/semaine_postes/log.txt 2>&1
-```
-
----
-
-## Run every 10 minutes
-
-```bash
-*/10 * * * * /home/Raftests/AMCS/bots_previsions/semaine_postes/.env/bin/python /home/Raftests/AMCS/bots_previsions/semaine_postes/excelHandler.py >> /home/Raftests/AMCS/bots_previsions/semaine_postes/log.txt 2>&1
 ```
 
 ---
