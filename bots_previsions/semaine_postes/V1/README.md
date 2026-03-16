@@ -30,6 +30,11 @@ The latest exception report format is not parsed correctly:
 
 ---
 
+
+
+### Free FG % above 100% and not relative to next week.
+
+
 # LASS Bug
 
 Issue with totals and details caused by incorrect routing values.
@@ -48,23 +53,11 @@ self.exceptionReportDF["Routing"] = self.exceptionReportDF.apply(
 
 ---
 
-# Known Data Issues
-
-* **R6 proto VRAI** never appears
-* **R1 & R6 overlap bug**
-
-  * Some **R1 series appear inside R6 series**
-  * Example discrepancy: `17.94`
-
-Further investigation required.
-
----
-
 # Processing Rules
 
 ## 1. Backlog Detection
 
-A row is considered backlog if:
+A row is delated from backlog if:
 
 ```
 (Hire Work) & (Backlog > 20) & (forecast_sum == 0)
@@ -125,9 +118,7 @@ Contains:
   * Clear **details table**
   * Clear **global summary table**
 
-### Output
 
-* [ ] Rework `OutputTemplate`
 
 ---
 
