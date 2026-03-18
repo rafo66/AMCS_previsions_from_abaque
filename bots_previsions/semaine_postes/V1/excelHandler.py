@@ -1,62 +1,3 @@
-'''
-TODO : 
-
-1. Separate in 3 scripts :
-- main.py : contains excelHandler class, and MatchingProductivities class, and all the code to process the exception report and get the productivities
-- outputFormatter.py : contains outputFormatter class, and all the code to format the output excel file
-- matchingProductivities.py : contains MatchingProductivities class, and all the code to match the productivities
-
-
-
-
-V0.5 - 05/03/2026
-
-
-
-1. Backlog : 
-(Hire Work) & (Backlog > 20) & (forecast_sum == 0)
-
-2. Nouvel Abaque sur les prédictions :  
-L1 : +20%
-R1&R6 : +5%
-P3: -20%
-LAS: -35%
-Par rapport à la réalitée 
-
-3. Retravailler OutputTemplate
-
-
-
-
-
-
-Relyes on "Reports/Report.xlsb", "Abaque/Abaque.xlsm", 'OutputTemplate.xlsm'
-Cached in Processed_Exception_report.xlsx, articleCachedProductivities.txt
-
-
-
-
-On linux : source .env/bin/activate
-
-
-crontab -e
-
-
-# run at 7 am on weekdays
-0 6 * * 1-5 /home/Raftests/AMCS/bots_previsions/semaine_postes/.env/bin/python /home/Raftests/AMCS/bots_previsions/semaine_postes/excelHandler.py >> /home/Raftests/AMCS/bots_previsions/semaine_postes/log.txt 2>&1
-
-# every 10 minutes
-*/10 * * * * /home/Raftests/AMCS/bots_previsions/semaine_postes/.env/bin/python /home/Raftests/AMCS/bots_previsions/semaine_postes/excelHandler.py >> /home/Raftests/AMCS/bots_previsions/semaine_postes/log.txt 2>&1
-
-# with flock to avoid multiple instances
-30 5 * * * flock -n /tmp/excelHandler.lock /home/Raftests/AMCS/bots_previsions/semaine_postes/.env/bin/python /home/Raftests/AMCS/bots_previsions/semaine_postes/excelHandler.py >> /home/Raftests/AMCS/bots_previsions/semaine_postes/log.txt 2>&1
-*/10 * * * * flock -n /tmp/excelHandler.lock /home/Raftests/AMCS/bots_previsions/semaine_postes/.env/bin/python /home/Raftests/AMCS/bots_previsions/semaine_postes/excelHandler.py >> /home/Raftests/AMCS/bots_previsions/semaine_postes/log.txt 2>&1
-
-tail -f log.txt 
-'''
-
-
-
 import datetime
 import os, os.path
 import pandas as pd
@@ -70,10 +11,10 @@ import sys
 
         
 #WOIPPY data : 
-oldLines =     ["D10", "D10R11", "D14R11", "D20", "D7R10", "FIMI", "FIMIR3B", "FIN","IOWA", "L1", "LAS1.", "P3", "R1", "R10", "R11", "R2", "R3B", "R2B", "R6", "R7", "P3R1"]
-newLines =     ["L1", "L1",      "L1",      "L1", "L1",     "L1",  "L1",      "L1","L1", "L1", "LASS1,", "P3", "R1", "R1", "R6", "R6", "R6", "R6","R6", "R1", "P3"]
-avgLineProto = [4.15, 4.15,      4.15,      4.15, 4.15,     4.15, 4.15,       4.15,4.15, 4.15, 0.39,     2.25, 14,   14,   15.8, 15.8, 15.8, 15.8, 15.8, 14, 2.25]
-avgLineSerie = [6.96, 6.69,      6.69,      6.96, 6.96,     6.96, 6.96,       6.96,6.96,  6.96,  0.7,      2.5, 23.2, 23.2, 39,   39,   39,   39,39,   23.2,  2.5]
+oldLines =     ["D10", "D10R11", "D14R11", "D20", "D7R10", "FIMI", "FIMIR3B", "FIN","IOWA", "L1", "LAS1.", "P3", "R1", "R10", "R11", "R2", "R3B", "R2B", "R6", "R7", "P3R1", "P3R6"]
+newLines =     ["L1", "L1",      "L1",      "L1", "L1",     "L1",  "L1",      "L1","L1", "L1", "LASS1,", "P3", "R1", "R1", "R6", "R6", "R6", "R6","R6", "R1", "P3", "P3"]
+avgLineProto = [4.15, 4.15,      4.15,      4.15, 4.15,     4.15, 4.15,       4.15,4.15, 4.15, 0.39,     2.25, 14,   14,   15.8, 15.8, 15.8, 15.8, 15.8, 14, 2.25, 2.25]
+avgLineSerie = [6.96, 6.69,      6.69,      6.96, 6.96,     6.96, 6.96,       6.96,6.96,  6.96,  0.7,      2.5, 23.2, 23.2, 39,   39,   39,   39,39,   23.2,  2.5,  2.5]
 
 
 
@@ -454,12 +395,14 @@ class excelHandler:
 
     
     '''
-    def __init__(self, exceptionReportPath, abaquePath, plantName, cacheFile="articleCachedProductivities.txt", bypassCalculs=False, DF_cacheFile="Processed_Exception_report.xlsx"):
+    def __init__(self, te_path, exceptionReportPath, abaquePath, plantName, cacheFile="articleCachedProductivities.txt", bypassCalculs=False, DF_cacheFile="Processed_Exception_report.xlsx"):
+        self.te_path = te_path
         self.exceptionReportPath = exceptionReportPath
         self.abaquePath = abaquePath
         self.plantName = plantName
         self.cacheFile = cacheFile
         self.DF_cacheFile = DF_cacheFile
+        self.infoText = ""
 
         self.bypassCalculs = bypassCalculs
         self.abaqueDF = self.getAbaqueDf()
@@ -489,6 +432,33 @@ class excelHandler:
     
             self.processExceptionReport()
 
+
+    def getAdditionalTons(self):
+        self.TELastModified = os.path.getmtime(self.te_path)
+        additionalDF = pd.read_excel(self.te_path,  header=2,  usecols="B:S")
+
+
+        for index, row in additionalDF.iterrows():
+            old_columns = ["Client",	"Article",	"Thickness",	"Width",	"Length",	"Ligne",	"Proto",	"Backlog",	"Forecast W",	"Forecast W1",	"Forecast W2",	"Forecast W3",	"Forecast W4",	"Forecast W5",	"Forecast W6",	"Forecast W7",	"Forecast W8",	"FG Free"]
+            new_columns = ["Name of sold-to party", "Material", "Thickness", "Width", "Length", "Routing", "Sales Type", "Backlog", "Forecast W", "Forecast W1", "Forecast W2", "Forecast W3", "Forecast W4", "Forecast W5", "Forecast W6", "Forecast W7", "Forecast W8", "STOCK_FG_FREE"]
+            for old_col, new_col in zip(old_columns, new_columns):
+                if old_col in row and new_col in self.exceptionReportDF.columns:
+                    try:
+                        # Determine the required type based on the column
+                        if new_col in ["Material", "Backlog", "Forecast W", "Forecast W1", "Forecast W2", "Forecast W3", "Forecast W4", "Forecast W5", "Forecast W6", "Forecast W7", "Forecast W8", "STOCK_FG_FREE"]:
+                            # Numeric columns
+                            converted_value = float(row[old_col]) if pd.notna(row[old_col]) else 0
+                        else:
+                            # String columns
+                            converted_value = str(row[old_col]) if pd.notna(row[old_col]) else ""
+                        
+                        self.exceptionReportDF.at[index, new_col] = converted_value
+                        printerUtil(f"Added additional data for row {index} from TE: {new_col}={converted_value}")
+                    except Exception as e:
+                        printerUtil(f"Error converting value for row {index}, column {new_col}: {e}")
+        
+
+
     def getExceptionReportDf(self):
         #save lastModified date of exceptionReportPath in self.exceptionReportLastModified
         self.exceptionReportLastModified = os.path.getmtime(self.exceptionReportPath)
@@ -510,6 +480,10 @@ class excelHandler:
         for c in forecast_cols + ["Backlog"]:
             if c in self.exceptionReportDF.columns:
                 self.exceptionReportDF[c] = pd.to_numeric(self.exceptionReportDF[c], errors="coerce").fillna(0)
+            else:
+                self.infoText += f"Column '{c}' not found in exception report. \n"
+                self.exceptionReportDF[c] = 0  # Add the column with default 0 if it's missing
+                printerUtil(f"Column '{c}' not found in exception report. Added with default 0.")
 
         sales_type = self.exceptionReportDF["Sales Type"].astype(str)
         forecast_sum = self.exceptionReportDF[forecast_cols].sum(axis=1)
@@ -525,7 +499,8 @@ class excelHandler:
             printerUtil(f"Excluding backlog for {excluded} 'Hire Work' lines (Backlog>20 and Forecast sum=0).")
             self.exceptionReportDF.loc[mask, "Backlog"] = 0
             printerUtil("Number of lines with Backlog > 0 after cleanup: ", (self.exceptionReportDF["Backlog"] > 0).sum())
-
+            # if LAS1 in Routing, replace by LAS1.
+            self.exceptionReportDF["Routing"] = self.exceptionReportDF.apply(lambda row: "LAS1." if "LAS1" in str(row["Routing"]) else row["Routing"], axis=1)
 
 
 
@@ -540,9 +515,7 @@ class excelHandler:
 
     def filterAbaque(self):
         # if poste = LAS1 keep only the lines where 2026 is in Année 1 
-        printerUtil("Filtering abaque for LAS1 postes, lines before filter: ", len(self.abaqueDF))
         self.abaqueDF = self.abaqueDF[~((self.abaqueDF["Poste"] == "LAS1") & (self.abaqueDF["Année 1"] != 2026))]
-        printerUtil("Abaque filtered, number of lines: ", len(self.abaqueDF))
 
     def processExceptionReport(self):
         '''
@@ -592,27 +565,32 @@ class excelHandler:
         return True
 
 class outputFormatter:
-    def __init__(self, df, abaqueDF, tp=r"OutputTemplate.xlsm", exceptionReportLastModified=None):
+    def __init__(self, df, abaqueDF, tp=r"OutputTemplate.xlsm", exceptionReportLastModified=None, teLastModified=None):
         self.df = df
         self.abaqueDF = abaqueDF
+        self.TELastModified = teLastModified
         self.exceptionReportLastModified = exceptionReportLastModified
         
         self.outputExcel(template_path=tp)
 
     def outputExcel(self, template_path):
-        # Create a table with each routing, and subdividing it in proto or not, and 1 column Sum of forecast W
         
-        wb = load_workbook(template_path, keep_vba=True)
-        #clear Details sheet
-        ws = wb["Details"]
-        ws.delete_rows(1, ws.max_row)
+        try:
+            wb = load_workbook(template_path, keep_vba=True)
+            ws = wb["Details"]
+            ws.delete_rows(1, ws.max_row)
+            ws = wb["Resultats"]
+        except Exception as e:
+            printerUtil("Error while loading Excel template: ", e)
+            exit(1)
 
-
-
-        ws = wb["Resultats"]
 
         start_row = 5  # L1 total starts here
         current_row = start_row
+
+
+        #print self.df columns
+        printerUtil("DataFrame columns: ", self.df.columns.tolist())
 
 
 
@@ -625,22 +603,30 @@ class outputFormatter:
         self.needsNewDesc = True
         self.lastDetailRow = -1
 
+
+
+
         # Write summary data to Excel
         for index, row in summary.iterrows():
             for i, col in enumerate(columnsToSum):
-                
-                
-                #printerUtil("writing to", current_row, 2 + i, summary.at[index, col], "for routing ", row["New Routing"], " proto ", row["Is Proto"], " col ", col)
-                cell = ws.cell(row=current_row, column=2 + i)
-                value = round(float(row[col]), 2)
 
+                #printerUtil(f"Processing summary row {index}, column {col} with value {row[col]} for routing {row['New Routing']} proto {row['Is Proto']}")
+            
+                cell = ws.cell(row=current_row, column=2 + i)
+
+                
                 try:
+                    value = round(float(row[col]), 2)
                     cell.value = value
                     cell.font = Font(color="000000")
                 except Exception as e:
                     printerUtil("Error setting value for cell:", e, " value: ", value, " routing: ", row["New Routing"], " proto: ", row["Is Proto"], " col: ", col)
+                    
                     continue
 
+
+
+                # Coefficient
                 isPostes = True if "(Postes)" in col else False
                 if isPostes:
                     cell.value = "=" + str(value) + "/D49"
@@ -680,13 +666,17 @@ class outputFormatter:
                 current_row=current_row+1
             current_row += 1
 
+
+        
+        current_row = 19
+
         # write total in column B for backlog postes, and in column C for backlog, and so on for each forecast W
         for i, col in enumerate(columnsToSum):
             isPostes = True if "(Postes)" in col else False
             if isPostes:
-                ws.cell(row=current_row-1, column=2 + i).value = "=" + str(round(float(summary[col].sum()), 2)) + "/D49"
+                ws.cell(row=current_row, column=2 + i).value = "=" + str(round(float(summary[col].sum()), 2)) + "/D49"
             else:
-                ws.cell(row=current_row-1, column=2 + i).value = round(float(summary[col].sum()), 2)
+                ws.cell(row=current_row, column=2 + i).value = round(float(summary[col].sum()), 2)
 
         # write subTotal in line 4, 7, 10, 13, 16, 19, 22, 25, 28, 31 in column B for backlog postes, and in column C for backlog, and so on for each forecast W
         for i, col in enumerate(columnsToSum):
@@ -701,7 +691,12 @@ class outputFormatter:
             ]
 
             for row, routing in rows_and_routings:
-                value = round(float(summary[summary["New Routing"] == routing][col].sum()), 2)
+                try:
+                    value = round(float(summary[summary["New Routing"] == routing][col].sum()), 2)
+                except KeyError:
+                    value = 0
+                
+                
                 cell = ws.cell(row=row, column=2 + i)
                 
                 if isPostes:
@@ -731,7 +726,7 @@ class outputFormatter:
         #Update text to include week number
         weekNumber = datetime.datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).isocalendar()[1]
 
-        # write to merged cell D&F 64 : "W"+str(weekNumber)+" Stock FG Free %"
+        # Week number
         for forecast_i in range(9): 
             ws.cell(row=2, column=4+2*forecast_i).value = "Forecast "+ "W" +str(weekNumber+forecast_i)
             ws.cell(row=21, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Avance / Retard"
@@ -739,6 +734,7 @@ class outputFormatter:
             ws.cell(row=38, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Programmation Semaine"
             ws.cell(row=53, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Ratrappage Backlog"
             ws.cell(row=63, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Stock FG Free %"
+            ws.cell(row=72, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Tonnes exceptionelles"
 
 
 
@@ -761,6 +757,9 @@ class outputFormatter:
             updateTime = datetime.datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).strftime("%Y-%m-%d %H:%M:%S")
             
             ws.cell(row=1, column=8).value = "Updated at : " + updateTime
+
+            #teLastModifiedDate = datetime.datetime.fromtimestamp(self.TELastModified).strftime('%Y-%m-%d %H:%M:%S')
+            #ws.cell(row=1, column=7).value = "Tonnes exceptionelles de : " + teLastModifiedDate
             
 
         printerUtil("Saving output file...")
@@ -772,14 +771,17 @@ class outputFormatter:
         
 
     def createDetail(self, rootingIndex, protoIndex, isPostes, col, wb):
+        
+        
         # keep in potentialDetails the details of the lines in newDf that have the same routing and proto or not
+        printerUtil(rootingIndex, "Creating details for routing ", newLines[rootingIndex], " proto ", protoIndex, " isPostes ", isPostes, " column ", col)
         potentialDetails = self.df[self.df.apply(lambda row: (row["New Routing"] == newLines[rootingIndex]) and ((row["Is Proto"] == 'VRAI') if protoIndex == 1 else (row["Is Proto"] == 'FAUX')), axis=1)]
         
         
 
 
-        self.potentialDetails = potentialDetails
-
+        
+        
         tonnesColName = col.replace(" (Postes)", "") if isPostes else col 
         postesColName = col if isPostes else col + " (Postes)"
 
@@ -936,16 +938,17 @@ class outputFormatter:
 
 
 
+WINDOWS_TE_PATH = r"Reports\TE.xlsx"
 WINDOWS_REPORT_PATH = r"Reports\Report.xlsb"
 WINDOWS_ABAQUE_PATH = r"Abaque\Abaque 2025-2026.xlsx"
 WINDOWS_CACHE_FILE = r"Cache\articleCachedProductivities.txt"
 WINDOWS_DF_CACHE_FILE = r"Cache\Processed_Exception_report.xlsx"
 WINDOWS_OUTPUT_TEMPLATE = r"OutputTemplate.xlsm"
 
+LINUX_TE_PATH = r"Reports/TE.xlsx"
 LINUX_PREFIX = r"/home/Raftests/AMCS/bots_previsions/semaine_postes/"
 LINUX_REPORT_PATH = r"Reports/Report.xlsb"
 LINUX_ABAQUE_PATH = r"Abaque/Abaque 2025-2026.xlsx"
-
 LINUX_CACHE_FILE = r"Cache/articleCachedProductivities.txt"
 LINUX_DF_CACHE_FILE = r"Cache/Processed_Exception_report.xlsx"
 LINUX_OUTPUT_TEMPLATE = r"OutputTemplate.xlsm"
@@ -957,6 +960,7 @@ if os.name == 'nt':  # Windows
     output_template = WINDOWS_OUTPUT_TEMPLATE
     df_cache_file = WINDOWS_DF_CACHE_FILE
     cache_file = WINDOWS_CACHE_FILE
+    te_path = WINDOWS_TE_PATH
     
 else:  # Linux or other
     report_path = LINUX_PREFIX + LINUX_REPORT_PATH
@@ -964,7 +968,7 @@ else:  # Linux or other
     output_template = LINUX_PREFIX + LINUX_OUTPUT_TEMPLATE
     df_cache_file = LINUX_PREFIX + LINUX_DF_CACHE_FILE
     cache_file = LINUX_PREFIX + LINUX_CACHE_FILE
-
+    te_path = LINUX_TE_PATH
 
 def printerUtil(*messages):
     timeStamp = datetime.datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).strftime("%Y-%m-%d %H:%M:%S")
@@ -980,7 +984,26 @@ def clearCache():
         printerUtil(f"Cleared: {df_cache_file}")
 
 
+def verifyReportExtention():
+    global report_path
+
+    try:
+        # try to locate the report file with .xlsb extension
+        if not os.path.exists(report_path):
+            # change report_path to have .xlsx extension instead of .xlsb
+            report_path = report_path.replace(".xlsb", ".xlsx")
+            if not os.path.exists(report_path):
+                printerUtil("Error: Report file not found with .xlsb or .xlsx extension.")
+                exit(1)
+    except Exception as e:
+        printerUtil("Error while verifying report file extension: ", e)
+        exit(1)
+
+
+
 def main():
+    verifyReportExtention()
+
     bypassCalculs = False
 
     if len(sys.argv) > 1:
@@ -999,9 +1022,9 @@ def main():
             return
         
     printerUtil("Starting excelHandler bypass caluls: ", bypassCalculs)
-    eH = excelHandler(report_path, abaque_path, "WOIPPY", bypassCalculs=bypassCalculs, cacheFile=cache_file, DF_cacheFile=df_cache_file)
+    eH = excelHandler(te_path, report_path, abaque_path, "WOIPPY", bypassCalculs=bypassCalculs, cacheFile=cache_file, DF_cacheFile=df_cache_file)
     df = eH.get_newDf()
-    outputFormatter(df, eH.abaqueDF, tp=output_template, exceptionReportLastModified=eH.exceptionReportLastModified)
+    outputFormatter(df, eH.abaqueDF, tp=output_template, exceptionReportLastModified=eH.exceptionReportLastModified, teLastModified=None)
 
 if __name__ == "__main__":
     main()
