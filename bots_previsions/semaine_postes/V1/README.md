@@ -16,35 +16,17 @@ The script parses the exception report, applies routing corrections, computes fo
 
 # Known Issues
 
-### Exception Report Parsing
-
-The latest exception report format is not parsed correctly:
-
-* Some columns are missing (notably **Forecast W5-8**).
-* Total sums appear incorrect, possibly due to a filtering issue.
-
-| Report                                                 | Status                  |
-| ------------------------------------------------------ | ----------------------- |
-| `Exception_report_20260309 - PLEASE DON'T MODIFY.xlsb` | ✅ Works (9/13)          |
-| `Exception_report_20260313 - PLEASE DON'T MODIFY.xlsx` | ❌ Does not work (13/13) |
-
----
-
-
-
-### Free FG % above 100% and not relative to next week.
 
 ### If an entire line of final output is empty, not sure how it reacts 
 ### (lines write total in outputFormatter) (if details are ok)
 
 ### Handle Unknwown Routs
 
+### Issue with totals and details caused by incorrect routing values.
 
-# LASS Bug
+### Calcul of additional Tonnes in avence / retard is false. Wrong ratio : Postes is ok, Tonnes isn't
 
-Issue with totals and details caused by incorrect routing values.
-
-### Fix implemented
+# Fix implemented
 
 Inside `filterFalseBacklog`:
 
@@ -107,13 +89,11 @@ Contains:
 
 ### Functional Improvements
 
-* [ ] Add `clear_last` function at the start of the precessus 
+* [ ] Dont replace previus programation of postes (Depends on format) 
 
-  * Clear **details table**
-  * Clear **global summary table**
+* [ ] Add partial MRF of curent month 
 
-
-
+* [ ] Two decimals or no decimals in the excel
 
 ---
 
