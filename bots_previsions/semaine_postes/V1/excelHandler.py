@@ -9,31 +9,49 @@ from openpyxl.styles import Font
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 import sys
 
-        
+from datetime import datetime, timedelta
+from collections import defaultdict
+import pytz  # or zoneinfo
+import calendar
+import warnings
+
+
+'''
+Warnings : 
+openpyxl/worksheet/_reader.py:223: UserWarning: Cell AD4585 is marked as a date but the serial value 250300377 is outside the limits for dates. The cell will be treated as an error.
+
+ExcelMatchingPipeline.py:510: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  self.newExceptionReportDf[newFieldName] = self.newExceptionReportDf.apply(lambda row: round(float(row[field]) / float(row["Productivity"]) / HEURES_PAR_POSTES, 2) if row["Productivity"] != -1 and float(row["Productivity"]) != 0 else -1, axis=1)
+
+'''        
+
+
 #WOIPPY data : 
 oldLines =     ["D10", "D10R11", "D14R11", "D20", "D7R10", "FIMI", "FIMIR3B", "FIN","IOWA", "L1", "LAS1.", "P3", "R1", "R10", "R11", "R2", "R3B", "R2B", "R6", "R7", "P3R1", "P3R6"]
-newLines =     ["L1", "L1",      "L1",      "L1", "L1",     "L1",  "L1",      "L1","L1", "L1", "LASS1,", "P3", "R1", "R1", "R6", "R6", "R6", "R6","R6", "R1", "P3", "P3"]
+newLines =     ["L1", "L1",      "L1",      "L1", "L1",     "L1",  "L1",      "L1","L1", "L1", "LASS1,", "P3", "R1", "R1", "R6", "R6", "R6", "R6","R6",        "R1", "P3", "P3"]
 avgLineProto = [4.15, 4.15,      4.15,      4.15, 4.15,     4.15, 4.15,       4.15,4.15, 4.15, 0.39,     2.25, 14,   14,   15.8, 15.8, 15.8, 15.8, 15.8, 14, 2.25, 2.25]
 avgLineSerie = [6.96, 6.69,      6.69,      6.96, 6.96,     6.96, 6.96,       6.96,6.96,  6.96,  0.7,      2.5, 23.2, 23.2, 39,   39,   39,   39,39,   23.2,  2.5,  2.5]
 
-
-
-
-VERSION = 0.1
+VERSION = 1.1
 CURENT_TIME_ZONE = "Europe/Paris"
+HEURES_PAR_POSTES = 7.5
+
+warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
+warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
 
 
-class MatchingProductivities:
+class MatchingProductivitiesEngine:
     '''
         Takes 2 dataframes as input :
         - exceptionReportDf : dataframe of the exception report, with only Woippy plant data
         - abaqueDf : dataframe of the abaque, with all the data
 
-        Returns the exceptionReportDf with a new column "Productivity" filled with the matched productivity for each row, and a new column "Match Level" filled with the level of the match (0 to 4, or -1 if no match)
+        Returns the exceptionReportDf with a new column "Productivity T/h" filled with the matched productivity for each row, and a new column "Match Level" filled with the level of the match (0 to 4, or -1 if no match)
+        stores it in self.exceptionReportDf
 
         Exemple : 
         
-        mP = MatchingProductivities(self.getExceptionReportDf(), self.getAbaqueDf(), self.cacheFile)
+        mP = MatchingProductivitiesEngine(self.getExceptionReportDf(), self.getAbaqueDf(), self.cacheFile)
         self.newExceptionReportDf = mP.exceptionReportDf
         
         if cacheFile is empty or None, no caching will be done. Else articleCachedProductivities.txt is used
@@ -78,7 +96,7 @@ class MatchingProductivities:
                 for line in lines:
                     article, prod, details, level = line.strip().split(":")
                     articleCachedProductivities[int(article)] = [float(prod), details, int(level)]
-                printerUtil("Loaded cached productivities from file ")
+                printerUtil("Loaded cached productivities from file : ", len(articleCachedProductivities), " entries")
                 return articleCachedProductivities
         else:
             return {}
@@ -377,8 +395,9 @@ class MatchingProductivities:
             
         self.curentDetails = "No average line data for " + str(oldLine) + " proto" + str(proto) 
         self.curentProductivity = -1
-          
-class excelHandler:
+
+
+class ExcelMatchingPipeline:
     '''
     Opens and get dataframe from Exception_report.xlsb
         => Filters the dataframe to only get Woippy plant data
@@ -386,7 +405,7 @@ class excelHandler:
     Opens and get dataframe from Abaque.xlsm
         => Export dataframe
 
-    Run MatchingProductivities function to get a productivity for each client in report
+    Run MatchingProductivitiesEngine function to get a productivity for each client in report
 
 
 
@@ -423,7 +442,7 @@ class excelHandler:
                 printerUtil("Error filtering false backlog: ", e)
                 exit(1)
 
-            mP = MatchingProductivities(self.exceptionReportDF, self.abaqueDF, self.cacheFile)
+            mP = MatchingProductivitiesEngine(self.exceptionReportDF, self.abaqueDF, self.cacheFile)
             self.newExceptionReportDf = mP.exceptionReportDf
     
             self.processExceptionReport()
@@ -497,7 +516,7 @@ class excelHandler:
         calculatedFields = ["Forecast W", "Forecast W1", "Forecast W2", "Forecast W3", "Forecast W4", "Forecast W5", "Forecast W6", "Forecast W7", "Forecast W8", "Backlog"]
         for field in calculatedFields:
             newFieldName = field + " (Postes)"
-            self.newExceptionReportDf[newFieldName] = self.newExceptionReportDf.apply(lambda row: round(float(row[field]) / float(row["Productivity"]) / 7.5, 2) if row["Productivity"] != -1 and float(row["Productivity"]) != 0 else -1, axis=1)
+            self.newExceptionReportDf[newFieldName] = self.newExceptionReportDf.apply(lambda row: round(float(row[field]) / float(row["Productivity"]) / HEURES_PAR_POSTES, 2) if row["Productivity"] != -1 and float(row["Productivity"]) != 0 else -1, axis=1)
 
         # apply newLine to routing column and save it in a new column called "Routing (Postes)"
         self.newExceptionReportDf["New Routing"] = self.newExceptionReportDf.apply(lambda row: newLines[oldLines.index(row["Routing"])] if row["Routing"] in oldLines else row["Routing"], axis=1)
@@ -521,7 +540,7 @@ class excelHandler:
         newDf.to_excel(self.DF_cacheFile, index=False)
         self.newDf = newDf
 
-    def get_newDf(self):
+    def get_completeDF(self):
         return self.newDf
     
     def isProtoName(self, protoReport):
@@ -534,33 +553,51 @@ class excelHandler:
             return False
         return True
 
-class outputFormatter:
-    def __init__(self, df, abaqueDF, tp=r"OutputTemplate.xlsm", exceptionReportLastModified=None):
-        self.df = df
-        self.abaqueDF = abaqueDF
-        self.exceptionReportLastModified = exceptionReportLastModified
-        
-        self.outputExcel(template_path=tp)
 
-    def outputExcel(self, template_path):
+class OutputFormatter:
+    def __init__(self, df, tp=r"OutputTemplate.xlsm", exceptionReportLastModified=None):
+        self.df = df
+        self.exceptionReportLastModified = exceptionReportLastModified
+        self.template_path = tp
+
+        self.outputExcel()
+
+    def outputExcel(self):
         
+        
+        wb, ws = self.openTemplate()
+
+        self.createCarnetClient(ws, wb)
+        self.createFreeFG(ws)
+        self.createMRF(ws)
+        self.updateWeekNumberText(ws)
+
+
+        self.generalCleanup(ws, wb)
+
+        
+    def openTemplate(self):
         try:
-            wb = load_workbook(template_path, keep_vba=True)
+            wb = load_workbook(self.template_path, keep_vba=True)
             ws = wb["Details"]
             ws.delete_rows(1, ws.max_row)
             ws = wb["Resultats"]
+            return wb, ws
         except Exception as e:
             printerUtil("Error while loading Excel template: ", e)
             exit(1)
 
+    def createCarnetClient(self, ws, wb):
+
+        # delate cells B4 to U19 for carnet client
+        cellRange = ws["B4:U19"]
+        for row in cellRange:
+            for cell in row:
+                cell.value = None
+
 
         start_row = 5  # L1 total starts here
         current_row = start_row
-
-
-
-
-
 
         columnsToSum = ["Backlog (Postes)", "Backlog", "Forecast W (Postes)", "Forecast W", "Forecast W1 (Postes)", "Forecast W1", "Forecast W2 (Postes)", "Forecast W2", "Forecast W3 (Postes)", "Forecast W3", "Forecast W4 (Postes)", "Forecast W4", "Forecast W5 (Postes)", "Forecast W5", "Forecast W6 (Postes)", "Forecast W6", "Forecast W7 (Postes)", "Forecast W7", "Forecast W8 (Postes)", "Forecast W8"]
         summary = self.df.groupby(["New Routing", "Is Proto"]).agg({col: "sum" for col in columnsToSum}).reset_index()
@@ -571,36 +608,61 @@ class outputFormatter:
         self.needsNewDesc = True
         self.lastDetailRow = -1
 
+        rows_and_routings = [
+            (4, "L1"),
+            (7, "LASS1,"),
+            (10, "P3"),
+            (13, "R1"),
+            (16, "R6"),
+            ]
 
 
 
         # Write summary data to Excel
         for index, row in summary.iterrows():
-            for i, col in enumerate(columnsToSum):
-
-                
-                
+            for i, col in enumerate(columnsToSum):                
                 cell = ws.cell(row=current_row, column=2 + i)
+                isPostes = True if "(Postes)" in col else False
 
-                
+
+
+
                 try:
-                    value = round(float(row[col]), 2)
+                    valuesToSum = [str(round(float(row[col]), 2))]
+
+                    # add tonnes exceptionnelles
+                    # if not backlog
+                    if not("Backlog" in col):
+                        if not isPostes:
+                            # add coordinate of tonnes cell to valuesToSum
+                            tonnesCell = ws.cell(row=current_row+69, column=2 + i-1)
+                            valuesToSum.append(tonnesCell.coordinate)
+                        else:
+                            tonnesCell = ws.cell(row=current_row+69, column=2 + i)
+                            prodCell = ws.cell(row=current_row+69, column=3)
+                            valuesToSum.append("(" + tonnesCell.coordinate + "/" + prodCell.coordinate + "/" + str(HEURES_PAR_POSTES) + ")")
+                    
+
+                    if isPostes:
+                        value = '=SUM(' + ','.join(valuesToSum) + ')/D49' if len(valuesToSum) > 0 else 0
+                    else:
+                        value = '=SUM(' + ','.join(valuesToSum) + ')' if len(valuesToSum) > 0 else 0
+                    
                     cell.value = value
                     cell.font = Font(color="000000")
                 except Exception as e:
                     printerUtil("Error setting value for cell:", e, " value: ", value, " routing: ", row["New Routing"], " proto: ", row["Is Proto"], " col: ", col)
-                    
                     continue
 
-
-
-                # Coefficient
-                isPostes = True if "(Postes)" in col else False
-                if isPostes:
-                    cell.value = "=" + str(value) + "/D49"
+                
+                
                
 
 
+
+
+
+                # Hyperlink and details handler
                 tonnesColName = col.replace(" (Postes)", "") if isPostes else col 
                 postesColName = col if isPostes else col + " (Postes)"
                 if row[tonnesColName] == 0 and row[postesColName] == 0:
@@ -616,9 +678,7 @@ class outputFormatter:
                 else:
                     cell.hyperlink = f"#Details!C{self.lastDetailRow}"
                 self.lastDetailRow = self.curentDetailRow
-                
-                
-
+    
                 rootingIndex = newLines.index(row["New Routing"]) if row["New Routing"] in newLines else -1
                 protoIndex = 1 if row["Is Proto"] == 'VRAI' else 0
                 if self.needsNewDesc:
@@ -629,51 +689,59 @@ class outputFormatter:
                 # go back to Resultats sheet
                 ws = wb["Resultats"]
 
-            
+            # Skip a line every 3 lines to have space for subtotal
             if current_row %3 == 0:
                 current_row=current_row+1
             current_row += 1
 
 
         
-        current_row = 19
 
-        # write total in column B for backlog postes, and in column C for backlog, and so on for each forecast W
+        # write subTotal in line 4, 7, 10, 13, 16
         for i, col in enumerate(columnsToSum):
             isPostes = True if "(Postes)" in col else False
-            if isPostes:
-                ws.cell(row=current_row, column=2 + i).value = "=" + str(round(float(summary[col].sum()), 2)) + "/D49"
-            else:
-                ws.cell(row=current_row, column=2 + i).value = round(float(summary[col].sum()), 2)
-
-        # write subTotal in line 4, 7, 10, 13, 16, 19, 22, 25, 28, 31 in column B for backlog postes, and in column C for backlog, and so on for each forecast W
-        for i, col in enumerate(columnsToSum):
-            isPostes = True if "(Postes)" in col else False
-
-            rows_and_routings = [
-            (4, "L1"),
-            (7, "LASS1,"),
-            (10, "P3"),
-            (13, "R1"),
-            (16, "R6"),
-            ]
 
             for row, routing in rows_and_routings:
                 try:
-                    value = round(float(summary[summary["New Routing"] == routing][col].sum()), 2)
+                    cellsToSum = []
+
+                    cellsToSum.append(ws.cell(row=row+1, column=2 + i))
+                    cellsToSum.append(ws.cell(row=row+2, column=2 + i))
+
+                    value = "SUM(" + ",".join([cell.coordinate for cell in cellsToSum]) + ")" if len(cellsToSum) > 0 else 0
+
                 except KeyError:
                     value = 0
                 
                 
                 cell = ws.cell(row=row, column=2 + i)
-                
-                if isPostes:
-                    cell.value = "=" + str(value) + "/D49"
-                else:
-                    cell.value = value
+                cell.value = "=" + str(value)
 
-        # STOCK_FG_FREE
-        for forecast_i in range(9):
+
+        current_row = 19
+        # write total in column B for backlog postes, and in column C for backlog, and so on for each forecast W
+        for i, col in enumerate(columnsToSum):
+            isPostes = True if "(Postes)" in col else False
+
+
+            cellsToSum = []
+            for row, routing in rows_and_routings:
+                try:
+                    cell = ws.cell(row=row, column=2 + i)
+                    cellsToSum.append(cell.coordinate)
+                except KeyError:
+                    pass
+
+            value = "=SUM(" + ",".join(cellsToSum) + ")" if len(cellsToSum) > 0 else 0
+
+            ws.cell(row=current_row, column=2 + i).value = value
+
+    def createFreeFG(self, ws):
+        
+        red_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+        green_fill = PatternFill(start_color="CCFFCC", end_color="CCFFCC", fill_type="solid")
+
+        for forecast_i in range(1, 9):
             forecastText = "Forecast W" if forecast_i == 0 else "Forecast W" + str(forecast_i)
 
 
@@ -685,14 +753,33 @@ class outputFormatter:
                 percent = round(float(sum_line_free) / float(sum_forecast_w) * 100, 2) if sum_forecast_w != 0 else 0
                 cellValues.append(float(percent))
             newOrder = [3, 4, 0, 2, 1]
+
             # change order of cells E64 to E68 to be in order of newOrder
             for i, newIndex in enumerate(newOrder):
-                ws.cell(row=64+i, column=5 + 2*forecast_i).value = str(cellValues[newIndex]) + "%"
-            ws.cell(row=69, column=5 + 2*forecast_i).value = str(round(float(sum(cellValues)/len(cellValues)), 2)) + "%"
+                cellX = 64+i
+                cellY = 5 + 2*(forecast_i-1)
+                cellValue = str(cellValues[newIndex]) + " %"
+                ws.cell(row=cellX, column=cellY).value = cellValue
+                if cellValues[newIndex] < 80:
+                    ws.cell(row=cellX, column=cellY).fill = red_fill
+                else:
+                    ws.cell(row=cellX, column=cellY).fill = green_fill
 
 
-        #Update text to include week number
-        weekNumber = datetime.datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).isocalendar()[1]
+            cellX = 69
+            cellY = 5 + 2*(forecast_i-1)
+            cellValue = round(float(sum(cellValues)/(len(cellValues)-1)), 2)
+            ws.cell(row=cellX, column=cellY).value = str(cellValue) + " %"
+            if cellValue < 80:
+                ws.cell(row=cellX, column=cellY).fill = red_fill
+            else:
+                ws.cell(row=cellX, column=cellY).fill = green_fill
+            #printerUtil(f"Calculated STOCK_FG_FREE for {forecastText}: ", cellValues, " average: ", round(float(sum(cellValues)/len(cellValues)), 2))
+
+        # 
+
+    def updateWeekNumberText(self, ws):
+        weekNumber = datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).isocalendar()[1]
 
         # Week number
         for forecast_i in range(9): 
@@ -701,40 +788,62 @@ class outputFormatter:
             ws.cell(row=29, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Total"
             ws.cell(row=38, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Programmation Semaine"
             ws.cell(row=53, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Ratrappage Backlog"
-            ws.cell(row=63, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Stock FG Free %"
             ws.cell(row=72, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Tonnes exceptionelles"
 
+            if forecast_i != 8:
+                ws.cell(row=63, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i+1)+" Stock FG Free %"
 
-
-        self.summary=summary
-        wb.calculation.fullCalcOnLoad = True
-
-        # set active cell to be on sheet 1
-        ws = wb["Resultats"]
-        ws.sheet_view.selection[0].active_cell = "G20"
-        ws.sheet_view.selection[0].sqref = "G20"
-
+    def updateVersionTextes(self, ws):
         # write to F1 the last modified date of the exception report
-        if self.exceptionReportLastModified != None:
-            # add one to the hour to be in the right timezone
-            self.exceptionReportLastModified = self.exceptionReportLastModified
-            
-            lastModifiedDate = datetime.datetime.fromtimestamp(self.exceptionReportLastModified).strftime('%Y-%m-%d %H:%M:%S')
-            ws.cell(row=1, column=6).value = "Exception Report from : " + lastModifiedDate
+        if self.exceptionReportLastModified != None:            
+            lastModifiedDate = datetime.fromtimestamp(self.exceptionReportLastModified).strftime('%Y-%m-%d %H:%M:%S')
+            ws.cell(row=1, column=6).value = "Exception Report du : " + lastModifiedDate
 
-            updateTime = datetime.datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).strftime("%Y-%m-%d %H:%M:%S")
-            
-            ws.cell(row=1, column=8).value = "Updated at : " + updateTime
+            updateTime = datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).strftime("%Y-%m-%d %H:%M:%S")
+            ws.cell(row=1, column=8).value = "Fichier mis à jour le: " + updateTime
 
-            
 
-        printerUtil("Saving output file...")
-        wb.save(template_path)
-        printerUtil("Output file saved.")
+    def createMRF(self, ws):
+        #clear cells A39 to A45 and C39 to C45
+        for i in range(7):
+            ws.cell(row=39+i, column=1).value = None
+            ws.cell(row=39+i, column=3).value = None
+
+        # for each week 
+        props, months = self.get_week_month_proportions_workdays(start_week_offset=0, num_weeks=8)
+        unique_months = self.get_unique_months(months)
+        
         
 
+        #start at cell D90 and write the proportions for each week in the next 10 columns
+        '''for i in range(8):
+            if len(props[i]) == 1:
+                ws.cell(row=90, column=4+2*i).value = props[i][0]
+                ws.cell(row=90, column=4+2*i+1).value = months[i][0]
+            elif len(props[i]) == 2:
+                ws.cell(row=90, column=4+2*i).value = props[i][0]
+                ws.cell(row=90, column=4+2*i+1).value = months[i][0]
+                ws.cell(row=91, column=4+2*i).value = props[i][1]
+                ws.cell(row=91, column=4+2*i+1).value = months[i][1]
+        '''
+        # write unique months in A39-A..
+        for i, month in enumerate(unique_months):
+            ws.cell(row=39+i, column=1).value = month
 
-        
+
+
+            # get all weeks that have this month and write them in column B
+            monthFormula = '=SUM('
+            for j in range(8):
+                if month in months[j]:
+                    weekTotalsCell = ws.cell(row=35, column=5+2*j)
+                    propMonth = props[j][months[j].index(month)]
+                    monthFormula += weekTotalsCell.coordinate + "*" + str(propMonth) + " + "
+            monthFormula = monthFormula[:-3] + ")"
+            ws.cell(row=39+i, column=3).value = monthFormula
+
+
+
 
     def createDetail(self, rootingIndex, protoIndex, isPostes, col, wb):
         
@@ -806,7 +915,6 @@ class outputFormatter:
         if realOutput <= 3:
             self.curentDetailRow=self.start_block_row + 7
 
-                
     def Colorizer(self, start_row, end_row, ws):
         # ===== Styles =====
         header_fill = PatternFill("solid", fgColor="D9E1F2")
@@ -898,6 +1006,73 @@ class outputFormatter:
                 ws.cell(row=start_row, column=c).border = Border(top=thick, left=thin, right=thin)
                 ws.cell(row=end_row, column=c).border = Border(bottom=thick, left=thin, right=thin)
 
+    def generalCleanup(self, ws, wb):
+        wb.calculation.fullCalcOnLoad = True
+
+        
+        ws = wb["Resultats"]
+        self.updateVersionTextes(ws)
+        
+
+
+            
+
+        ws.sheet_view.selection[0].active_cell = "A1"
+        ws.sheet_view.selection[0].sqref = "A1"
+
+        printerUtil("Saving output file...")
+        wb.save(self.template_path)
+        printerUtil("Output file saved.")
+        
+
+    def get_week_month_proportions_workdays(self, start_week_offset, num_weeks):
+        tz = pytz.timezone(CURENT_TIME_ZONE)
+        today = datetime.now(tz).date()
+
+        # Always go back to Monday of the current week
+        current_monday = today - timedelta(days=today.weekday())
+
+        results_proportions = []
+        results_months = []
+
+        for w in range(start_week_offset, start_week_offset + num_weeks):
+            week_start = current_monday + timedelta(weeks=w)
+
+            month_counts = defaultdict(int)
+
+            # Only Monday → Friday (0 to 4)
+            for d in range(5):
+                day = week_start + timedelta(days=d)
+                month_name = day.strftime("%B")
+                month_counts[month_name] += 1
+
+            proportions = []
+            months = []
+
+            for month, count in month_counts.items():
+                proportions.append(count / 5)
+                months.append(month)
+
+            results_proportions.append(proportions)
+            results_months.append(months)
+
+        return results_proportions, results_months
+
+    def get_unique_months(self, results_months):
+        seen = set()
+        ordered_months = []
+
+        for week_months in results_months:
+            for m in week_months:
+                if m not in seen:
+                    seen.add(m)
+                    ordered_months.append(m)
+
+        # Sort chronologically using month number
+        ordered_months.sort(key=lambda m: list(calendar.month_name).index(m))
+
+        return ordered_months
+
 
 
 
@@ -925,8 +1100,6 @@ if os.name == 'nt':  # Windows
     output_template = WINDOWS_OUTPUT_TEMPLATE
     df_cache_file = WINDOWS_DF_CACHE_FILE
     cache_file = WINDOWS_CACHE_FILE
-
-    
 else:  # Linux or other
     report_path = LINUX_PREFIX + LINUX_REPORT_PATH
     abaque_path = LINUX_PREFIX + LINUX_ABAQUE_PATH
@@ -936,8 +1109,8 @@ else:  # Linux or other
 
 
 def printerUtil(*messages):
-    timeStamp = datetime.datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).strftime("%Y-%m-%d %H:%M:%S")
-    print("[excelHandler] ", timeStamp, " - ", " ".join(str(msg) for msg in messages))
+    timeStamp = datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).strftime("%Y-%m-%d %H:%M:%S")
+    print("[ExcelMatchingPipeline] ", timeStamp, " - ", " ".join(str(msg) for msg in messages))
 
 
 def clearCache():
@@ -965,7 +1138,6 @@ def verifyReportExtention():
         exit(1)
 
 
-
 def main():
     verifyReportExtention()
 
@@ -979,17 +1151,17 @@ def main():
             printerUtil("Clearing cache files...")
             clearCache()
         elif sys.argv[1].lower() == "--help":
-            printerUtil("Usage: python excelHandler.py [OPTIONS]")
+            printerUtil("Usage: python ExcelMatchingPipeline.py [OPTIONS]")
             printerUtil("\nOptions:")
             printerUtil("  --Bypass    Skip calculations and use cached data")
             printerUtil("  --clear     Clear all cache files")
             printerUtil("  --help      Show this help message")
             return
         
-    printerUtil("Starting excelHandler bypass caluls: ", bypassCalculs)
-    eH = excelHandler(report_path, abaque_path, "WOIPPY", bypassCalculs=bypassCalculs, cacheFile=cache_file, DF_cacheFile=df_cache_file)
-    df = eH.get_newDf()
-    outputFormatter(df, eH.abaqueDF, tp=output_template, exceptionReportLastModified=eH.exceptionReportLastModified)
+    printerUtil("Starting ExcelMatchingPipeline bypass calculations: ", bypassCalculs)
+    excelMatchingPipeline = ExcelMatchingPipeline(report_path, abaque_path, "WOIPPY", bypassCalculs=bypassCalculs, cacheFile=cache_file, DF_cacheFile=df_cache_file)
+    df = excelMatchingPipeline.get_completeDF()
+    OutputFormatter(df, tp=output_template, exceptionReportLastModified=excelMatchingPipeline.exceptionReportLastModified)
 
 if __name__ == "__main__":
     main()
