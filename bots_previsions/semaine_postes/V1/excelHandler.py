@@ -17,20 +17,24 @@ import warnings
 
 
 '''
-Warnings : 
-openpyxl/worksheet/_reader.py:223: UserWarning: Cell AD4585 is marked as a date but the serial value 250300377 is outside the limits for dates. The cell will be treated as an error.
+2025
+LAS1	8,682679426
+FAUX	15,69857143
+VRAI	5,149496403
 
-ExcelMatchingPipeline.py:510: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
-  self.newExceptionReportDf[newFieldName] = self.newExceptionReportDf.apply(lambda row: round(float(row[field]) / float(row["Productivity"]) / HEURES_PAR_POSTES, 2) if row["Productivity"] != -1 and float(row["Productivity"]) != 0 else -1, axis=1)
+2026
+LAS1	0,578484848
+FAUX	0,644166667
+VRAI	0,563888889
 
 '''        
 
 
 #WOIPPY data : 
-oldLines =     ["D10", "D10R11", "D14R11", "D20", "D7R10", "FIMI", "FIMIR3B", "FIN","IOWA", "L1", "LAS1.", "P3", "R1", "R10", "R11", "R2", "R3B", "R2B", "R6", "R7", "P3R1", "P3R6"]
-newLines =     ["L1", "L1",      "L1",      "L1", "L1",     "L1",  "L1",      "L1","L1", "L1", "LASS1,", "P3", "R1", "R1", "R6", "R6", "R6", "R6","R6",        "R1", "P3", "P3"]
-avgLineProto = [4.15, 4.15,      4.15,      4.15, 4.15,     4.15, 4.15,       4.15,4.15, 4.15, 0.39,     2.25, 14,   14,   15.8, 15.8, 15.8, 15.8, 15.8, 14, 2.25, 2.25]
-avgLineSerie = [6.96, 6.69,      6.69,      6.96, 6.96,     6.96, 6.96,       6.96,6.96,  6.96,  0.7,      2.5, 23.2, 23.2, 39,   39,   39,   39,39,   23.2,  2.5,  2.5]
+oldLines =     ["D10", "D10R11",  "D14R11",  "D20", "D7R10", "FIMI", "FIMIR3B",   "FIN","IOWA", "L1",          "LAS1.", "P3",    "R1", "R10", "R11", "R2", "R3B", "R2B", "R6", "R7", "P3R1", "P3R6"]
+newLines =     ["L1",  "L1",      "L1",      "L1",  "L1",     "L1",  "L1",        "L1","L1", "L1",             "LASS1,", "P3",   "R1", "R1", "R6", "R6", "R6", "R6","R6",        "R1", "P3", "P3"]
+avgLineProto = [5.46,  5.46,      5.46,      5.46,  5.46,     5.46, 5.46,         5.46,5.46, 5.46,             0.56 ,     2.9,    10.25,   10.25,    10.45 ,  10.45 ,  10.45 ,  10.45 ,  10.45 , 10.25, 2.25, 2.25]
+avgLineSerie = [10.62, 10.62,     10.62,     10.62, 10.62,     10.62, 10.62,      10.62,10.62,  10.62,  0.64,      2.02, 22.36 , 22.36 ,  31.19 ,    31.19 ,    31.19 ,    31.19 , 31.19 ,   22.36 ,  2.5,  2.5]
 
 VERSION = 1.1
 CURENT_TIME_ZONE = "Europe/Paris"
@@ -506,6 +510,17 @@ class ExcelMatchingPipeline:
         # if poste = LAS1 keep only the lines where 2026 is in Année 1 
         self.abaqueDF = self.abaqueDF[~((self.abaqueDF["Poste"] == "LAS1") & (self.abaqueDF["Année 1"] != 2026))]
 
+        # get for each Poste, and each Proto/Serie the average Prod T/h/OF, and save it in a dict avgLineProto and avgLineSerie with key Poste and Proto/Serie, to be used in filterLevel4 of MatchingProductivitiesEngine
+        local_avgLineProto = {}
+        local_avgLineSerie = {}
+        for poste in self.abaqueDF["Poste"].unique():
+            for proto in self.abaqueDF["Proto"].unique():
+                filtered = self.abaqueDF[(self.abaqueDF["Poste"] == poste) & (self.abaqueDF["Proto"] == proto)]
+                avg = filtered["Prod T/h/OF"].mean()
+                local_avgLineProto[(poste, proto)] = avg
+                printerUtil(f"Average productivity for line {poste} proto {proto} : {round(avg, 2)}")
+
+
     def processExceptionReport(self):
         '''
             Create Postes columns, and format routing and proto
@@ -873,16 +888,16 @@ class OutputFormatter:
         ws.cell(row=self.curentDetailRow, column=6).value = "Tonnes" 
         ws.cell(row=self.curentDetailRow, column=7).value = "Productivity" 
 
-        ws.cell(row=self.curentDetailRow+1, column=3).value = "Sum Tonnes : " + str(round(float(potentialDetails[tonnesColName].sum()), 2)) 
-        ws.cell(row=self.curentDetailRow+2, column=3).value = "Sum Postes : " + str(round(float(potentialDetails[postesColName].sum()), 2))
-        ws.cell(row=self.curentDetailRow+3, column=3).value = "Average Productivity : " + str(round(float(potentialDetails["Productivity"].mean()), 2))
-
+        curentSubDetailRow = self.curentDetailRow + 1
+       
         self.curentDetailRow=self.curentDetailRow+1
 
 
         
         realOutput = 0
-
+        curentDetailPostes = 0
+        curentDetailTonnes = 0
+        
         for index, row in potentialDetails.iterrows():
             #if postes + tonnes = 0 then skip the line
             if float(row[tonnesColName]) == 0 and float(row[postesColName]) == 0:
@@ -893,8 +908,8 @@ class OutputFormatter:
 
 
             ws.cell(row=self.curentDetailRow, column=4).value = self.productText
-            
-
+            curentDetailPostes += float(row[postesColName])
+            curentDetailTonnes += float(row[tonnesColName])
 
             ws.cell(row=self.curentDetailRow, column=5).value = row[postesColName] # Postes
             ws.cell(row=self.curentDetailRow, column=6).value = row[tonnesColName] # Tonnes
@@ -905,6 +920,10 @@ class OutputFormatter:
             self.curentDetailRow=self.curentDetailRow+1
 
 
+        ws.cell(row=curentSubDetailRow, column=3).value = "Sum Tonnes : " + str(round(float(curentDetailTonnes), 2))
+        ws.cell(row=curentSubDetailRow+1, column=3).value = "Sum Postes : " + str(round(float(curentDetailPostes), 2))
+        ws.cell(row=curentSubDetailRow+2, column=3).value = "Average Productivity : " + str(round(float(curentDetailTonnes/curentDetailPostes/HEURES_PAR_POSTES), 2) if curentDetailPostes != 0 else "N/A")
+                                                                                                                                                    
         self.end_block_row = self.curentDetailRow - 1
         if realOutput <= 3:
             self.end_block_row = self.start_block_row + 3
