@@ -211,7 +211,7 @@ class MatchingProductivitiesEngine:
             self.exceptionReportDf.at[index, "Abaque Indexes"] = str(details) + "#" + str(level)
 
             if subIndex % 50 == 0:
-                printerUtil(f"Row {subIndex} / {index} / {len(self.exceptionReportDf)} level: {level}, Prod: {round(float(prod), 2)}")
+                #printerUtil(f"Row {subIndex} / {index} / {len(self.exceptionReportDf)} level: {level}, Prod: {round(float(prod), 2)}")
                 try:
                     self.saveCachedProductivities()
                 except Exception as e:
