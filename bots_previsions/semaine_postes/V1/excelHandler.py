@@ -32,9 +32,11 @@ VRAI	0,563888889
 
 #WOIPPY data : 
 oldLines =     ["D10", "D10R11",  "D14R11",  "D20", "D7R10", "FIMI", "FIMIR3B",   "FIN","IOWA", "L1",          "LAS1.", "P3",    "R1", "R10", "R11", "R2", "R3B", "R2B", "R6", "R7", "P3R1", "P3R6"]
-newLines =     ["L1",  "L1",      "L1",      "L1",  "L1",     "L1",  "L1",        "L1","L1", "L1",             "LASS1,", "P3",   "R1", "R1", "R6", "R6", "R6", "R6","R6",        "R1", "P3", "P3"]
-avgLineProto = [5.46,  5.46,      5.46,      5.46,  5.46,     5.46, 5.46,         5.46,5.46, 5.46,             0.56 ,     2.9,    10.25,   10.25,    10.45 ,  10.45 ,  10.45 ,  10.45 ,  10.45 , 10.25, 2.25, 2.25]
-avgLineSerie = [10.62, 10.62,     10.62,     10.62, 10.62,     10.62, 10.62,      10.62,10.62,  10.62,  0.64,      2.02, 22.36 , 22.36 ,  31.19 ,    31.19 ,    31.19 ,    31.19 , 31.19 ,   22.36 ,  2.5,  2.5]
+newLines =     ["L1",  "L1",      "L1",      "L1",  "L1",     "L1",  "L1",        "L1","L1", "L1",             "LASS1,", "P3",   "R1", "R1",  "R6",  "R6", "R6",   "R6","R6",   "R1", "P3", "P3"]
+
+
+newLineProdProto = { "L1":  2.9, "P3": 1.16, "LASS1,": 0.29, "R1": 8.21, "R6": 10.12}
+newLineProdSerie = { "L1":  5.43, "P3": 1.69, "LASS1,": 0.42, "R1": 16.67, "R6": 25.06}
 
 VERSION = 1.1
 CURENT_TIME_ZONE = "Europe/Paris"
@@ -205,19 +207,25 @@ class MatchingProductivitiesEngine:
 
 
         subIndex=0
+        self.levelDistribution = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, -1: 0}
+
         for index, row in self.exceptionReportDf.iterrows():
             prod, details, level = self.getProductivityForRow(index, row)
+            self.levelDistribution[level] += 1
+
             self.exceptionReportDf.at[index, "Productivity"] = round(float(prod), 2)
             self.exceptionReportDf.at[index, "Abaque Indexes"] = str(details) + "#" + str(level)
 
             if subIndex % 50 == 0:
-                #printerUtil(f"Row {subIndex} / {index} / {len(self.exceptionReportDf)} level: {level}, Prod: {round(float(prod), 2)}")
+                printerUtil(f"Row {subIndex} / {index} / {len(self.exceptionReportDf)} level: {level}, Prod: {round(float(prod), 2)}")
                 try:
                     self.saveCachedProductivities()
                 except Exception as e:
                     printerUtil("Error while saving cached productivities: ", e)
 
             subIndex+=1
+
+        print("Matching done, level distribution : ", self.levelDistribution)
 
         return self.exceptionReportDf
 
@@ -389,12 +397,12 @@ class MatchingProductivitiesEngine:
         if self.isProtoName(proto) == 'VRAI':
             if oldLine in oldLines:
                 self.curentDetails = "Average of line " + str(oldLine) + " for proto articles in abaque"
-                self.curentProductivity = avgLineProto[oldLines.index(oldLine)]
+                self.curentProductivity = newLineProdProto[newLines[oldLines.index(oldLine)].replace(".", "")]
                 return
         else:
             if oldLine in oldLines:
                 self.curentDetails = "Average of line " + str(oldLine) + " for serie articles in abaque"
-                self.curentProductivity = avgLineSerie[oldLines.index(oldLine)]
+                self.curentProductivity = newLineProdSerie[newLines[oldLines.index(oldLine)].replace(".", "")]
                 return
             
         self.curentDetails = "No average line data for " + str(oldLine) + " proto" + str(proto) 
@@ -483,13 +491,12 @@ class ExcelMatchingPipeline:
 
         mask = (
             sales_type.str.contains("Hire Work", case=False, na=False)
-            & (self.exceptionReportDF["Backlog"] > 20)
             & (forecast_sum == 0)
         )
 
         excluded = int(mask.sum())
         if excluded:
-            printerUtil(f"Excluding backlog for {excluded} 'Hire Work' lines (Backlog>20 and Forecast sum=0).")
+            printerUtil(f"Excluding backlog for {excluded} 'Hire Work' lines and Forecast sum=0.")
             self.exceptionReportDF.loc[mask, "Backlog"] = 0
             printerUtil("Number of lines with Backlog > 0 after cleanup: ", (self.exceptionReportDF["Backlog"] > 0).sum())
             # if LAS1 in Routing, replace by LAS1.
@@ -508,16 +515,29 @@ class ExcelMatchingPipeline:
 
     def filterAbaque(self):
         # if poste = LAS1 keep only the lines where 2026 is in Année 1 
-        self.abaqueDF = self.abaqueDF[~((self.abaqueDF["Poste"] == "LAS1") & (self.abaqueDF["Année 1"] != 2026))]
+        #self.abaqueDF = self.abaqueDF[~((self.abaqueDF["Poste"] == "LAS1") & (self.abaqueDF["Année 1"] != 2026))]
+        self.abaqueDF = self.abaqueDF[~((self.abaqueDF["Poste"] == "LAS1") & (self.abaqueDF["Prod T/h/OF"] > 0.75))]
+
+        # for each Post != LAS1, keep only the bottom 90% Prod T/h/OF
+        for poste in self.abaqueDF["Poste"].unique():
+            if poste != "LAS1":
+                threshold = self.abaqueDF[self.abaqueDF["Poste"] == poste]["Prod T/h/OF"].quantile(0.9)
+                self.abaqueDF = self.abaqueDF[~((self.abaqueDF["Poste"] == poste) & (self.abaqueDF["Prod T/h/OF"] > threshold))]
+
+
+        '''
+        With threshhold : level distribution :  {0: 825, 1: 0, 2: 62, 3: 211, 4: 26, -1: 3}
+        '''
+
+
+        # save chache abaque after filtering
+        #self.abaqueDF.to_excel("abaque_filtered.xlsx", index=False)
 
         # get for each Poste, and each Proto/Serie the average Prod T/h/OF, and save it in a dict avgLineProto and avgLineSerie with key Poste and Proto/Serie, to be used in filterLevel4 of MatchingProductivitiesEngine
-        local_avgLineProto = {}
-        local_avgLineSerie = {}
         for poste in self.abaqueDF["Poste"].unique():
             for proto in self.abaqueDF["Proto"].unique():
                 filtered = self.abaqueDF[(self.abaqueDF["Poste"] == poste) & (self.abaqueDF["Proto"] == proto)]
                 avg = filtered["Prod T/h/OF"].mean()
-                local_avgLineProto[(poste, proto)] = avg
                 printerUtil(f"Average productivity for line {poste} proto {proto} : {round(avg, 2)}")
 
 
@@ -881,8 +901,20 @@ class OutputFormatter:
         protoText = "proto" if protoIndex == 1 else "serie"
         postesText = "Postes" if isPostes else "Tonnes"
 
+        weekNumber = datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).isocalendar()[1]
+
+        detailsText = col.replace(" (Postes)", "")
+        if "Backlog" in detailsText:
+            detailsText = "Backlog"
+        else:
+            try:
+                detailsText = "Forecast W" + str(weekNumber + int(detailsText.split("W")[1])) + " "
+            except:
+                detailsText = "Forecast W" + str(weekNumber) + " "
+
+
         self.start_block_row = self.curentDetailRow
-        ws.cell(row=self.curentDetailRow, column=3).value = "Details for : " + newLines[rootingIndex] + " "+ protoText + " - " + postesText + " " + col.replace(" (Postes)", "")
+        ws.cell(row=self.curentDetailRow, column=3).value = "Details for : " + newLines[rootingIndex] + " "+ protoText + " - " + postesText + " " + detailsText
         ws.cell(row=self.curentDetailRow, column=4).value = "Article : Client - Length x Width x Thickness" 
         ws.cell(row=self.curentDetailRow, column=5).value = "Postes" 
         ws.cell(row=self.curentDetailRow, column=6).value = "Tonnes" 
