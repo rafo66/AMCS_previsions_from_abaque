@@ -1,5 +1,7 @@
 import datetime
 import os, os.path
+import openpyxl
+from openpyxl import chart
 import pandas as pd
 import time
 
@@ -7,6 +9,14 @@ import time
 from openpyxl import load_workbook
 from openpyxl.styles import Font
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+from openpyxl.utils import get_column_letter
+from openpyxl import load_workbook
+from openpyxl.chart import LineChart, Reference, ScatterChart
+from openpyxl.chart.axis import DateAxis
+from openpyxl.chart import ScatterChart, Reference, Series
+from openpyxl.chart import LineChart, Reference
+from openpyxl.drawing.line import LineProperties
+
 import sys
 
 from datetime import datetime, timedelta
@@ -14,6 +24,8 @@ from collections import defaultdict
 import pytz  # or zoneinfo
 import calendar
 import warnings
+
+from openpyxl.drawing.line import LineProperties
 
 
 '''
@@ -215,9 +227,12 @@ class MatchingProductivitiesEngine:
 
             self.exceptionReportDf.at[index, "Productivity"] = round(float(prod), 2)
             self.exceptionReportDf.at[index, "Abaque Indexes"] = str(details) + "#" + str(level)
+            
+            if subIndex % 200 == 0:
+                printerUtil(f"Row {subIndex} / {index} / {len(self.exceptionReportDf)} level: {level}, Prod: {round(float(prod), 2)}")
 
             if subIndex % 50 == 0:
-                printerUtil(f"Row {subIndex} / {index} / {len(self.exceptionReportDf)} level: {level}, Prod: {round(float(prod), 2)}")
+                #printerUtil(f"Row {subIndex} / {index} / {len(self.exceptionReportDf)} level: {level}, Prod: {round(float(prod), 2)}")
                 try:
                     self.saveCachedProductivities()
                 except Exception as e:
@@ -225,7 +240,10 @@ class MatchingProductivitiesEngine:
 
             subIndex+=1
 
-        print("Matching done, level distribution : ", self.levelDistribution)
+
+        self.saveCachedProductivities()
+
+        #print("Matching done, level distribution : ", self.levelDistribution)
 
         return self.exceptionReportDf
 
@@ -443,7 +461,15 @@ class ExcelMatchingPipeline:
         if bypassCalculs:
             self.newDf = pd.read_excel(self.DF_cacheFile)
             self.exceptionReportLastModified = os.path.getmtime(self.exceptionReportPath)    
-
+            
+            
+            with open(self.cacheFile, "r") as f:
+                lines = f.readlines()
+                self.articleCachedProductivities = {}
+                for line in lines:
+                    article, prod, details, level = line.strip().split(":")
+                    self.articleCachedProductivities[int(article)] = [float(prod), details, int(level)]
+                
             #self.build_details()
         else:
             self.exceptionReportDF = self.getExceptionReportDf()
@@ -456,6 +482,7 @@ class ExcelMatchingPipeline:
 
             mP = MatchingProductivitiesEngine(self.exceptionReportDF, self.abaqueDF, self.cacheFile)
             self.newExceptionReportDf = mP.exceptionReportDf
+            self.articleCachedProductivities = mP.articleCachedProductivities
     
             self.processExceptionReport()
 
@@ -484,7 +511,7 @@ class ExcelMatchingPipeline:
             else:
                 self.infoText += f"Column '{c}' not found in exception report. \n"
                 self.exceptionReportDF[c] = 0  # Add the column with default 0 if it's missing
-                printerUtil(f"Column '{c}' not found in exception report. Added with default 0.")
+                #printerUtil(f"Column '{c}' not found in exception report. Added with default 0.")
 
         sales_type = self.exceptionReportDF["Sales Type"].astype(str)
         forecast_sum = self.exceptionReportDF[forecast_cols].sum(axis=1)
@@ -534,11 +561,12 @@ class ExcelMatchingPipeline:
         #self.abaqueDF.to_excel("abaque_filtered.xlsx", index=False)
 
         # get for each Poste, and each Proto/Serie the average Prod T/h/OF, and save it in a dict avgLineProto and avgLineSerie with key Poste and Proto/Serie, to be used in filterLevel4 of MatchingProductivitiesEngine
-        for poste in self.abaqueDF["Poste"].unique():
+        '''for poste in self.abaqueDF["Poste"].unique():
             for proto in self.abaqueDF["Proto"].unique():
                 filtered = self.abaqueDF[(self.abaqueDF["Poste"] == poste) & (self.abaqueDF["Proto"] == proto)]
                 avg = filtered["Prod T/h/OF"].mean()
                 printerUtil(f"Average productivity for line {poste} proto {proto} : {round(avg, 2)}")
+        '''
 
 
     def processExceptionReport(self):
@@ -546,7 +574,7 @@ class ExcelMatchingPipeline:
             Create Postes columns, and format routing and proto
         '''
 
-        intressingFields = ["Name of sold-to party", "Abaque Indexes", "Routing", "Material", "Productivity", "Forecast W", "Forecast W1", "Forecast W2", "Forecast W3", "Forecast W4", "Forecast W5", "Forecast W6", "Forecast W7", "Forecast W8", "Backlog", "Thickness", "Width", "Length", "STOCK_FG_FREE"]
+        intressingFields = ["Name of ship-to party", "Name of sold-to party", "Abaque Indexes", "Routing", "Material", "Productivity", "Forecast W", "Forecast W1", "Forecast W2", "Forecast W3", "Forecast W4", "Forecast W5", "Forecast W6", "Forecast W7", "Forecast W8", "Backlog", "Thickness", "Width", "Length", "STOCK_FG_FREE"]
     
         calculatedFields = ["Forecast W", "Forecast W1", "Forecast W2", "Forecast W3", "Forecast W4", "Forecast W5", "Forecast W6", "Forecast W7", "Forecast W8", "Backlog"]
         for field in calculatedFields:
@@ -562,10 +590,10 @@ class ExcelMatchingPipeline:
         newDf = self.newExceptionReportDf[intressingFields + [field + " (Postes)" for field in calculatedFields] + ["New Routing", "Is Proto"]]
         
 
-        printerUtil("Number of lines before cleanup: ", len(newDf))
+        #printerUtil("Number of lines before cleanup: ", len(newDf))
         newDf = newDf[newDf.apply(lambda row: all(self.isValid(row[field + " (Postes)"]) for field in calculatedFields), axis=1)]
         newDf = newDf[newDf.apply(lambda row: sum(float(row[field]) for field in calculatedFields) != 0, axis=1)]
-        printerUtil("Number of lines after cleanup: ", len(newDf))
+        #printerUtil("Number of lines after cleanup: ", len(newDf))
 
 
 
@@ -590,10 +618,17 @@ class ExcelMatchingPipeline:
 
 
 class OutputFormatter:
-    def __init__(self, df, tp=r"OutputTemplate.xlsm", exceptionReportLastModified=None):
+    def __init__(self, df, tp=r"OutputTemplate.xlsm", exceptionReportLastModified=None, articleCachedProductivities={}, abaqueDF=pd.DataFrame()):
         self.df = df
+        self.abaqueDF = abaqueDF
         self.exceptionReportLastModified = exceptionReportLastModified
         self.template_path = tp
+        self.SecondLevelDetailsOutputRunner = 2
+        self.articleCachedProductivities = articleCachedProductivities
+
+
+
+        
 
         self.outputExcel()
 
@@ -601,6 +636,18 @@ class OutputFormatter:
         
         
         wb, ws = self.openTemplate()
+        
+        #delate sheet named Details2
+        if "Details2" in wb.sheetnames:
+            del wb["Details2"]
+
+        #recreate Details2
+        wb.create_sheet("Details2")
+
+
+        ws = wb["Details"]
+        ws.delete_rows(1, ws.max_row)
+        ws = wb["Resultats"]
 
         self.createCarnetClient(ws, wb)
         self.createFreeFG(ws)
@@ -663,7 +710,11 @@ class OutputFormatter:
 
 
                 try:
-                    valuesToSum = [str(round(float(row[col]), 2))]
+                    if isPostes:
+                        valuesToSum = ["Details!C"+str(self.curentDetailRow+1)] if row[col] != 0 else []
+                    else:
+                        valuesToSum = ["Details!C"+str(self.lastDetailRowH+2)] if row[col] != 0 else []
+
 
                     # add tonnes exceptionnelles
                     # if not backlog
@@ -679,9 +730,35 @@ class OutputFormatter:
                     
 
                     if isPostes:
+                        # add special LASER proto tonnes
+                        if row["New Routing"] == "LASS1," and row["Is Proto"] == 'VRAI':
+                            for _ in range(0, 40):
+                                if not("Backlog" in col):
+                                    tonnesCell = ws.cell(row=current_row+69+21+_, column=2 + i)
+                                    prodCell = ws.cell(row=current_row+69+21+_, column=2)
+                                    verifStr = "IF(" + prodCell.coordinate + ">0, " + tonnesCell.coordinate + "/" + prodCell.coordinate + "/" + str(HEURES_PAR_POSTES) + ", 0)"
+                                    valuesToSum.append(verifStr)
+                                else:
+                                    tonnesCell = ws.cell(row=current_row+69+21+_, column=3)
+                                    prodCell = ws.cell(row=current_row+69+21+_, column=2)
+                                    verifStr = "IF(" + prodCell.coordinate + ">0, " + tonnesCell.coordinate + "/" + prodCell.coordinate + "/" + str(HEURES_PAR_POSTES) + ", 0)"
+                                    valuesToSum.append(verifStr)
+
                         value = '=SUM(' + ','.join(valuesToSum) + ')/D49' if len(valuesToSum) > 0 else 0
                     else:
+                        # add special LASER proto tonnes
+                        if row["New Routing"] == "LASS1," and row["Is Proto"] == 'VRAI':
+                            if not("Backlog" in col):
+                                for _ in range(0, 40):
+                                    tonnesCell = ws.cell(row=current_row+69+21+_, column=1 + i)
+                                    valuesToSum.append(tonnesCell.coordinate)
+                            else:
+                                for _ in range(0, 40):
+                                    tonnesCell = ws.cell(row=current_row+69+21+_, column=3)
+                                    valuesToSum.append(tonnesCell.coordinate)
+
                         value = '=SUM(' + ','.join(valuesToSum) + ')' if len(valuesToSum) > 0 else 0
+
                     
                     cell.value = value
                     cell.font = Font(color="000000")
@@ -710,9 +787,10 @@ class OutputFormatter:
                 # Hyperlien interne vers une cellule précise
                 if self.needsNewDesc:
                     cell.hyperlink = f"#Details!C{self.curentDetailRow}"
+                    self.lastDetailRow = self.curentDetailRow
+                    self.lastDetailRowH = self.curentDetailRow
                 else:
-                    cell.hyperlink = f"#Details!C{self.lastDetailRow}"
-                self.lastDetailRow = self.curentDetailRow
+                    cell.hyperlink = f"#Details!C{self.lastDetailRowH}"
     
                 rootingIndex = newLines.index(row["New Routing"]) if row["New Routing"] in newLines else -1
                 protoIndex = 1 if row["Is Proto"] == 'VRAI' else 0
@@ -820,10 +898,11 @@ class OutputFormatter:
         for forecast_i in range(9): 
             ws.cell(row=2, column=4+2*forecast_i).value = "Forecast "+ "W" +str(weekNumber+forecast_i)
             ws.cell(row=21, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Avance / Retard"
-            ws.cell(row=29, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Total"
+            ws.cell(row=29, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Production Total / semaine"
             ws.cell(row=38, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Programmation Semaine"
             ws.cell(row=53, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Ratrappage Backlog"
             ws.cell(row=72, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" Tonnes exceptionelles"
+            ws.cell(row=98, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i)+" LASER proto"
 
             if forecast_i != 8:
                 ws.cell(row=63, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i+1)+" Stock FG Free %"
@@ -919,6 +998,7 @@ class OutputFormatter:
         ws.cell(row=self.curentDetailRow, column=5).value = "Postes" 
         ws.cell(row=self.curentDetailRow, column=6).value = "Tonnes" 
         ws.cell(row=self.curentDetailRow, column=7).value = "Productivity" 
+        ws.cell(row=self.curentDetailRow, column=8).value = "Activer" 
 
         curentSubDetailRow = self.curentDetailRow + 1
        
@@ -929,13 +1009,21 @@ class OutputFormatter:
         realOutput = 0
         curentDetailPostes = 0
         curentDetailTonnes = 0
+
         
+   
+        firstDetailRow = -1
+
+
         for index, row in potentialDetails.iterrows():
             #if postes + tonnes = 0 then skip the line
             if float(row[tonnesColName]) == 0 and float(row[postesColName]) == 0:
                 continue
+            else:
+                if firstDetailRow == -1:
+                    firstDetailRow = self.curentDetailRow
 
-            self.productText = str(row["Material"]) + ":" +str(row["Name of sold-to party"]) + " - " + str(row["Length"]) + "x" + str(row["Width"]) + "x" + str(row["Thickness"])
+            self.productText = str(row["Material"]) + ":" +str(row["Name of sold-to party"]) + " - " + str(row["Length"]) + "x" + str(row["Width"]) + "x" + str(row["Thickness"]) + " : " + str(row["Name of ship-to party"])
             realOutput = realOutput + 1
 
 
@@ -946,16 +1034,52 @@ class OutputFormatter:
             ws.cell(row=self.curentDetailRow, column=5).value = row[postesColName] # Postes
             ws.cell(row=self.curentDetailRow, column=6).value = row[tonnesColName] # Tonnes
             ws.cell(row=self.curentDetailRow, column=7).value = round(float(row["Productivity"]), 2) # Productivity
+            ws.cell(row=self.curentDetailRow, column=7).hyperlink = f"#Details2!C{self.SecondLevelDetailsOutputRunner}"
 
+            ws.cell(row=self.curentDetailRow, column=8).value = 1
 
+            self.createSecondLevelDetails(wb, productivity=round(float(row["Productivity"]), 2), generalDesc=newLines[rootingIndex] + " "+ protoText, specificDesc=self.productText)
 
             self.curentDetailRow=self.curentDetailRow+1
 
 
-        ws.cell(row=curentSubDetailRow, column=3).value = "Sum Tonnes : " + str(round(float(curentDetailTonnes), 2))
-        ws.cell(row=curentSubDetailRow+1, column=3).value = "Sum Postes : " + str(round(float(curentDetailPostes), 2))
-        ws.cell(row=curentSubDetailRow+2, column=3).value = "Average Productivity : " + str(round(float(curentDetailTonnes/curentDetailPostes/HEURES_PAR_POSTES), 2) if curentDetailPostes != 0 else "N/A")
-                                                                                                                                                    
+        
+        self.lastDetailRow = self.curentDetailRow - 1
+            
+            
+        # sum if takes only start and end cell with a : 
+        # Get the range of cells for the sum
+        sum_range_start = ws.cell(row=firstDetailRow, column=5).coordinate
+        sum_range_end = ws.cell(row=self.lastDetailRow, column=5).coordinate
+        sum_range = f"{sum_range_start}:{sum_range_end}"
+        
+        criteria_range_start = ws.cell(row=firstDetailRow, column=8).coordinate
+        criteria_range_end = ws.cell(row=self.lastDetailRow, column=8).coordinate
+        criteria_range = f"{criteria_range_start}:{criteria_range_end}"
+        
+        # Sum of Postes (column 5) where Activer (column 8) = 1
+        ws.cell(row=curentSubDetailRow, column=3).value = f"=SUMIF({criteria_range},1,{sum_range})"
+        ws.cell(row=curentSubDetailRow, column=2).value = "Total Postes"
+        
+        # Sum of Tonnes (column 6) where Activer (column 8) = 1
+        tonnes_range_start = ws.cell(row=firstDetailRow, column=6).coordinate
+        tonnes_range_end = ws.cell(row=self.lastDetailRow, column=6).coordinate
+        tonnes_range = f"{tonnes_range_start}:{tonnes_range_end}"
+        ws.cell(row=curentSubDetailRow+1, column=3).value = f"=SUMIF({criteria_range},1,{tonnes_range})"
+        ws.cell(row=curentSubDetailRow+1, column=2).value = "Total Tonnes"
+        
+        # Average productivity (weighted by postes)
+        # SUMPRODUCT(productivity * postes) / SUM(postes)
+        prod_range_start = ws.cell(row=firstDetailRow, column=7).coordinate
+        prod_range_end = ws.cell(row=self.lastDetailRow, column=7).coordinate
+        prod_range = f"{prod_range_start}:{prod_range_end}"
+        
+        ws.cell(row=curentSubDetailRow+2, column=3).value = f"=IF(COUNTIF({criteria_range},1)>0,AVERAGEIF({criteria_range},1,{prod_range}),0)"
+        ws.cell(row=curentSubDetailRow+2, column=2).value = "Average Productivity"
+
+
+
+
         self.end_block_row = self.curentDetailRow - 1
         if realOutput <= 3:
             self.end_block_row = self.start_block_row + 3
@@ -966,12 +1090,135 @@ class OutputFormatter:
         if realOutput <= 3:
             self.curentDetailRow=self.start_block_row + 7
 
+
+
+    def createSecondLevelDetails(self, wb, productivity, generalDesc, specificDesc):
+        ws = wb["Details2"]
+
+        ws.cell(row=self.SecondLevelDetailsOutputRunner, column=3).value = generalDesc + " - " + specificDesc
+        ws.cell(row=self.SecondLevelDetailsOutputRunner, column=4).value = "Date"
+        ws.cell(row=self.SecondLevelDetailsOutputRunner, column=5).value = "Productivités de l'abaque"
+        ws.cell(row=self.SecondLevelDetailsOutputRunner, column=6).value = "Temps de référence"
+        ws.cell(row=self.SecondLevelDetailsOutputRunner, column=7).value = "Matin après-midi"
+        ws.cell(row=self.SecondLevelDetailsOutputRunner, column=8).value = "Tonnes"
+        ws.cell(row=self.SecondLevelDetailsOutputRunner, column=9).value = "Bob prècedente"
+        ws.cell(row=self.SecondLevelDetailsOutputRunner, column=10).value = "Position OF"
+
+        ws.cell(row=self.SecondLevelDetailsOutputRunner+1, column=3).value = "Productivity : " + str(productivity) + " T/h"
+
+
+        try:
+            curentArticle = specificDesc.split(":")[0]
+            prod, details, level = self.articleCachedProductivities[int(curentArticle)]
+            levelDescriptions = {
+                0: "Articles exactes",
+                1: "Articles même client et même proto/serie et même dimentions",
+                2: "Articles même client et même proto/serie et épaisseur",
+                3: "Articles même client et même proto/serie",
+                4: "Moyenne ligne " + generalDesc,
+                -1: "Aucune donnée similaire dans l'abaque"
+            }
+
+            #convert string like [367, 799, 1227, 1595, 1852] to list
+            #print(details, type(details))
+            detailsArray = details.strip("[]").split(",") if details != "[]" else []
+            detailsArray = [detail.strip() for detail in detailsArray]
+
+            ws.cell(row=self.SecondLevelDetailsOutputRunner+1, column=3).value = str(float(prod)) + " T/h/OF - " + str(len(detailsArray)) + " " + levelDescriptions.get(level, "Niveau inconnu") + ""
+            #ws.cell(row=self.SecondLevelDetailsOutputRunner, column=4).value = str(details)
+
+
+            localGraphHeight = 0
+            detailElements = []
+            for detailElement in detailsArray: 
+                # get productivity for detailElement in abaqueDF
+
+                prodStr = str(self.abaqueDF.loc[int(detailElement), "Prod T/h/OF"])
+                dateStr = str(self.abaqueDF.loc[int(detailElement), "Date 1"])
+                tonnesStr = str(self.abaqueDF.loc[int(detailElement), "Tonnes"])
+                heureFloat = float(self.abaqueDF.loc[int(detailElement), "Temps 1 (h)"].replace(",", "."))
+                dateStr = datetime.strptime(dateStr, "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y")
+                
+                #concat date and heure in format "2024-01-01 08:30:00"
+                dt = timedelta(days=heureFloat) + datetime.strptime(dateStr, "%d/%m/%Y")
+                dt = dt.strftime("%d/%m/%Y %H:%M:%S")
+                #L1 serie - 8105975:BONGARD SAS - 1900.0x1350.0x2.0
+
+
+
+                temptsStr = str(self.abaqueDF.loc[int(detailElement), "heures"])
+                #round to 2 decimal
+                temptsStr = str(round(float(temptsStr), 2))
+
+
+                ws.cell(row=self.SecondLevelDetailsOutputRunner+1, column=4).value = str(dt)
+                ws.cell(row=self.SecondLevelDetailsOutputRunner+1, column=5).value = float(prodStr)
+                ws.cell(row=self.SecondLevelDetailsOutputRunner+1, column=6).value = temptsStr
+                ws.cell(row=self.SecondLevelDetailsOutputRunner+1, column=8).value = tonnesStr
+                self.SecondLevelDetailsOutputRunner += 1
+                localGraphHeight=localGraphHeight+1
+
+            # insert a graph for the productivity of the details, with x axis the date, and y axis the productivity, and title the graph with the generalDesc and specificDesc
+            if localGraphHeight > 1:
+                chart = LineChart()
+                chart.title = generalDesc + " - " + specificDesc
+                chart.x_axis.title = None
+                chart.y_axis.title = None
+                
+                # Disable legend
+                chart.legend = None
+                
+                # Disable gridlines (quadillage)
+                chart.x_axis.majorGridlines = None
+                chart.y_axis.majorGridlines = None
+                
+                # Ensure axes are enabled
+                chart.x_axis.delete = False
+                chart.y_axis.delete = False
+
+                
+                # Prevent axis label overlap
+                # Set label offset to move labels further from axis (100 = default, 200 = double offset)
+                chart.x_axis.lblOffset = 550
+                chart.y_axis.lblOffset = 550
+                                
+                # Set crossing point to avoid label overlap with axis
+                chart.x_axis.cross = 0
+                chart.y_axis.cross = 0
+                
+                # Set number format for x-axis labels (only date, no time)
+                for row in range(self.SecondLevelDetailsOutputRunner-localGraphHeight+1, self.SecondLevelDetailsOutputRunner-1):
+                    ws.cell(row=row, column=4).number_format = 'DD/MM/YYYY'
+                
+                
+                data = Reference(ws, min_col=5, min_row=self.SecondLevelDetailsOutputRunner-localGraphHeight+1, max_row=self.SecondLevelDetailsOutputRunner)
+                categories = Reference(ws, min_col=4, min_row=self.SecondLevelDetailsOutputRunner-localGraphHeight+1, max_row=self.SecondLevelDetailsOutputRunner)
+                chart.add_data(data, titles_from_data=False)
+                chart.set_categories(categories)
+                
+                # Set all lines to the same color (blue)
+                for series in chart.series:
+                    series.graphicalProperties.line.solidFill = "0070C0"
+                
+                ws.add_chart(chart, "H" + str(self.SecondLevelDetailsOutputRunner-localGraphHeight))
+
+
+
+
+        except Exception as e:
+            printerUtil("Error getting cached productivity for article ", specificDesc.split(":")[0], " : ", e)
+            ws.cell(row=self.SecondLevelDetailsOutputRunner, column=4).value = "No cached productivity"
+            ws.cell(row=self.SecondLevelDetailsOutputRunner, column=5).value = ""
+
+        self.SecondLevelDetailsOutputRunner += 13
+
     def Colorizer(self, start_row, end_row, ws):
         # ===== Styles =====
         header_fill = PatternFill("solid", fgColor="D9E1F2")
         summary_fill = PatternFill("solid", fgColor="F2F2F2")
         max_fill = PatternFill("solid", fgColor="C6EFCE")
         min_fill = PatternFill("solid", fgColor="FFC7CE")
+        headerLengh = 9
 
         bold_font = Font(bold=True)
 
@@ -982,11 +1229,11 @@ class OutputFormatter:
 
         # ===== Apply thin borders everywhere inside block =====
         for r in range(start_row, end_row + 1):
-            for c in range(3, 8):
+            for c in range(3, headerLengh):
                 ws.cell(row=r, column=c).border = thin_border
 
         # ===== Header styling =====
-        for c in range(3, 8):
+        for c in range(3, headerLengh):
             cell = ws.cell(row=start_row, column=c)
             cell.fill = header_fill
             cell.font = bold_font
@@ -1025,32 +1272,32 @@ class OutputFormatter:
                 
 
         # ===== Thick outside border =====
-        for c in range(3, 8):
+        for c in range(3, headerLengh):
             ws.cell(row=start_row, column=c).border = Border(
                 top=thick,
                 left=thick if c == 3 else thin,
-                right=thick if c == 7 else thin
+                right=thick if c == headerLengh-1 else thin
             )
 
             ws.cell(row=end_row, column=c).border = Border(
                 bottom=thick,
                 left=thick if c == 3 else thin,
-                right=thick if c == 7 else thin
+                right=thick if c == headerLengh-1 else thin
             )
 
         for r in range(start_row, end_row + 1):
             ws.cell(row=r, column=3).border = Border(left=thick)
-            ws.cell(row=r, column=7).border = Border(right=thick, top=thin, bottom=thin)
+            ws.cell(row=r, column=headerLengh-1).border = Border(right=thick, top=thin, bottom=thin)
 
     
         #Add thick border on the left of column 3, and on the right of column 7, and on the top of the header, and on the bottom of the last line
-        for c in range(3, 8):
+        for c in range(3, headerLengh):
             if c == 3:
                 ws.cell(row=start_row, column=c).border = Border(top=thick, left=thick, right=thick)
                 ws.cell(row=end_row, column=c).border = Border(bottom=thick, left=thick, right=thick)
                 for row in range(start_row+1, end_row):
                     ws.cell(row=row, column=c).border = Border(left=thick, right=thick)
-            elif c == 7:
+            elif c == headerLengh-1:
                 ws.cell(row=start_row, column=c).border = Border(top=thick, right=thick, bottom=thin)
                 ws.cell(row=end_row, column=c).border = Border(bottom=thick, right=thick, top=thin)
             else:
@@ -1060,20 +1307,24 @@ class OutputFormatter:
     def generalCleanup(self, ws, wb):
         wb.calculation.fullCalcOnLoad = True
 
-        
+
         ws = wb["Resultats"]
-        self.updateVersionTextes(ws)
-        
 
-
+        try:
+            self.updateVersionTextes(ws)
+        except Exception as e:
+            printerUtil(f"Error occurred while updating version texts: {e}")
             
+
 
         ws.sheet_view.selection[0].active_cell = "A1"
         ws.sheet_view.selection[0].sqref = "A1"
 
-        printerUtil("Saving output file...")
-        wb.save(self.template_path)
-        printerUtil("Output file saved.")
+        try:
+            wb.save(self.template_path)
+            printerUtil("Output file saved.")
+        except Exception as e:
+            printerUtil(f"Error occurred while saving output file: {e}")
         
 
     def get_week_month_proportions_workdays(self, start_week_offset, num_weeks):
@@ -1212,7 +1463,7 @@ def main():
     printerUtil("Starting ExcelMatchingPipeline bypass calculations: ", bypassCalculs)
     excelMatchingPipeline = ExcelMatchingPipeline(report_path, abaque_path, "WOIPPY", bypassCalculs=bypassCalculs, cacheFile=cache_file, DF_cacheFile=df_cache_file)
     df = excelMatchingPipeline.get_completeDF()
-    OutputFormatter(df, tp=output_template, exceptionReportLastModified=excelMatchingPipeline.exceptionReportLastModified)
+    OutputFormatter(df, tp=output_template, exceptionReportLastModified=excelMatchingPipeline.exceptionReportLastModified, articleCachedProductivities=excelMatchingPipeline.articleCachedProductivities, abaqueDF=excelMatchingPipeline.abaqueDF)
 
 if __name__ == "__main__":
     main()
