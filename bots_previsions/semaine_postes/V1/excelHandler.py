@@ -50,7 +50,7 @@ newLines =     ["L1",  "L1",      "L1",      "L1",  "L1",     "L1",  "L1",      
 newLineProdProto = { "L1":  2.9, "P3": 1.16, "LASS1,": 0.29, "R1": 8.21, "R6": 10.12}
 newLineProdSerie = { "L1":  5.43, "P3": 1.69, "LASS1,": 0.42, "R1": 16.67, "R6": 25.06}
 
-VERSION = 1.1
+VERSION = 1.3
 CURENT_TIME_ZONE = "Europe/Paris"
 HEURES_PAR_POSTES = 7.5
 
@@ -625,6 +625,7 @@ class OutputFormatter:
         self.template_path = tp
         self.SecondLevelDetailsOutputRunner = 2
         self.articleCachedProductivities = articleCachedProductivities
+        self.checkboxRows = []
 
 
 
@@ -633,16 +634,27 @@ class OutputFormatter:
         self.outputExcel()
 
     def outputExcel(self):
-        
-        
         wb, ws = self.openTemplate()
-        
-        #delate sheet named Details2
-        if "Details2" in wb.sheetnames:
-            del wb["Details2"]
 
-        #recreate Details2
-        wb.create_sheet("Details2")
+        self.getLastWeeksData(wb, ws)
+
+
+
+        
+        if "Details" in wb.sheetnames:
+            del wb["Details"]
+            wb.create_sheet("Details")
+            # set column width of details per pixel
+            detailsSheet = wb["Details"]
+            detailsSheet.column_dimensions['A'].width = 6
+            detailsSheet.column_dimensions['B'].width = 21
+            detailsSheet.column_dimensions['C'].width = 42
+            detailsSheet.column_dimensions['D'].width = 100
+
+
+        if "Details2" in wb.sheetnames:
+            del wb["Details2"]    
+            wb.create_sheet("Details2")
 
 
         ws = wb["Details"]
@@ -657,12 +669,60 @@ class OutputFormatter:
 
         self.generalCleanup(ws, wb)
 
+    def getLastWeeksData(self, wb, ws): 
+        self.pastData = {
+            "Programmation Semaine": [],
+            "tonnesExceptionelles": [],
+            "tonnesExceptionellesLaserProto": []
+        }
+        self.needsWeekUpdate = False
+
         
+        # get last week number in template and save it in self.lastWeekNumber
+        try:
+            lastWeekNumberCell = ws["D2"]
+            self.curentWeekNumber = datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).isocalendar()[1]
+            self.lastWeekNumber = int(lastWeekNumberCell.value.split("W")[1])
+            printerUtil("Last week number in template: ", self.lastWeekNumber, "Current week number: ", self.curentWeekNumber)
+            if self.lastWeekNumber != self.curentWeekNumber:
+                printerUtil("New week detected, updating week number in template to ", self.curentWeekNumber)
+                self.needsWeekUpdate = True
+                tonnesExceptionnelles = []
+                tonnesExceptionnellesLaserProto = []
+
+                for weekOffset in range(0, 9):
+                    weekProg = []
+                    for row in ws.iter_rows(min_row=39, max_row=43, min_col=5+weekOffset*2, max_col=5+weekOffset*2):
+                        for cell in row:
+                            weekProg.append(cell.value)
+                    self.pastData["Programmation Semaine"].append(weekProg)
+
+                for row in ws.iter_rows(min_row=74, max_row=87, min_col=4, max_col=22):
+                    curentRowTE = []
+                    for col_i, cell in enumerate(row):
+                        if col_i % 2 == 1:  # only update tonnes columns, not postes
+                            continue
+                        curentRowTE.append(cell.value)
+                    tonnesExceptionnelles.append(curentRowTE)
+                self.pastData["tonnesExceptionelles"] = tonnesExceptionnelles
+
+                for row in ws.iter_rows(min_row=99, max_row=132, min_col=4, max_col=22):
+                    curentRowTELP = []
+                    for col_i, cell in enumerate(row):
+                        if col_i % 2 == 1:  # only update tonnes columns, not postes
+                            continue
+                        curentRowTELP.append(cell.value)
+                    tonnesExceptionnellesLaserProto.append(curentRowTELP)
+                self.pastData["tonnesExceptionellesLaserProto"] = tonnesExceptionnellesLaserProto
+
+                printerUtil("Past data saved: ", self.pastData)                    
+
+        except Exception as e:
+            printerUtil("Error while getting last week number from template: ", e)
+              
     def openTemplate(self):
         try:
             wb = load_workbook(self.template_path, keep_vba=True)
-            ws = wb["Details"]
-            ws.delete_rows(1, ws.max_row)
             ws = wb["Resultats"]
             return wb, ws
         except Exception as e:
@@ -711,9 +771,9 @@ class OutputFormatter:
 
                 try:
                     if isPostes:
-                        valuesToSum = ["Details!C"+str(self.curentDetailRow+1)] if row[col] != 0 else []
+                        valuesToSum = [f'VALUE(TRIM(MID(Details!C{self.curentDetailRow+1},FIND(":",Details!C{self.curentDetailRow+1})+1,99)))'] if row[col] != 0 else []
                     else:
-                        valuesToSum = ["Details!C"+str(self.lastDetailRowH+2)] if row[col] != 0 else []
+                        valuesToSum = [f'VALUE(TRIM(MID(Details!C{self.lastDetailRowH+2},FIND(":",Details!C{self.lastDetailRowH+2})+1,99)))'] if row[col] != 0 else []
 
 
                     # add tonnes exceptionnelles
@@ -732,7 +792,7 @@ class OutputFormatter:
                     if isPostes:
                         # add special LASER proto tonnes
                         if row["New Routing"] == "LASS1," and row["Is Proto"] == 'VRAI':
-                            for _ in range(0, 40):
+                            for _ in range(0, 36):
                                 if not("Backlog" in col):
                                     tonnesCell = ws.cell(row=current_row+69+21+_, column=2 + i)
                                     prodCell = ws.cell(row=current_row+69+21+_, column=2)
@@ -749,11 +809,11 @@ class OutputFormatter:
                         # add special LASER proto tonnes
                         if row["New Routing"] == "LASS1," and row["Is Proto"] == 'VRAI':
                             if not("Backlog" in col):
-                                for _ in range(0, 40):
+                                for _ in range(0, 36):
                                     tonnesCell = ws.cell(row=current_row+69+21+_, column=1 + i)
                                     valuesToSum.append(tonnesCell.coordinate)
                             else:
-                                for _ in range(0, 40):
+                                for _ in range(0, 36):
                                     tonnesCell = ws.cell(row=current_row+69+21+_, column=3)
                                     valuesToSum.append(tonnesCell.coordinate)
 
@@ -791,10 +851,12 @@ class OutputFormatter:
                     self.lastDetailRowH = self.curentDetailRow
                 else:
                     cell.hyperlink = f"#Details!C{self.lastDetailRowH}"
+
     
                 rootingIndex = newLines.index(row["New Routing"]) if row["New Routing"] in newLines else -1
                 protoIndex = 1 if row["Is Proto"] == 'VRAI' else 0
                 if self.needsNewDesc:
+                    self.sourceHyperLinkCoord = cell.coordinate
                     self.createDetail(rootingIndex, protoIndex, isPostes, col, wb)
 
 
@@ -892,6 +954,10 @@ class OutputFormatter:
         # 
 
     def updateWeekNumberText(self, ws):
+        if self.needsWeekUpdate == False:
+            return
+        
+
         weekNumber = datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).isocalendar()[1]
 
         # Week number
@@ -907,6 +973,43 @@ class OutputFormatter:
             if forecast_i != 8:
                 ws.cell(row=63, column=4+2*forecast_i).value = "W"+str(weekNumber+forecast_i+1)+" Stock FG Free %"
 
+
+        # display exact dates on line 97
+        for forecast_i in range(9):
+            firstDayOfWeek = datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)) + timedelta(days=(forecast_i)*7 - datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).weekday())
+            lastDayOfWeek = firstDayOfWeek + timedelta(days=6)
+            firstDayOfWeek = firstDayOfWeek.replace(tzinfo=None)
+            lastDayOfWeek = lastDayOfWeek.replace(tzinfo=None)
+
+            ws.cell(row=97, column=4+2*forecast_i).value = firstDayOfWeek
+            ws.cell(row=97, column=4+2*forecast_i+1).value = lastDayOfWeek
+            ws.cell(row=97, column=4+2*forecast_i).number_format = 'DD/MM/YYYY'
+            ws.cell(row=97, column=4+2*forecast_i+1).number_format = 'DD/MM/YYYY'
+
+        # Update past data
+        try:
+            if self.pastData:
+                for weekOffset in range(1, 9):
+                    for i, value in enumerate(self.pastData["Programmation Semaine"][weekOffset]):
+                        #printerUtil(f"Updating past data for col {5+(weekOffset-1)*2}, line {39+i}, value: ", value)
+                        ws.cell(row=39+i, column=5+(weekOffset-1)*2).value = value
+
+                for row_i, row in enumerate(self.pastData["tonnesExceptionelles"]):
+                    for col_i, value in enumerate(row[1:]):  # skip first column
+                        #printerUtil(f"Updating past data for tonnes exceptionelles, col {4+col_i*2}, line {74+row_i}, value: ", value)
+                        ws.cell(row=74 + row_i, column=4 + col_i*2).value = value  # shift left
+
+                for row_i, row in enumerate(self.pastData["tonnesExceptionellesLaserProto"]):
+                    for col_i, value in enumerate(row[1:]):  # skip first column
+                        #printerUtil(f"Updating past data for tonnes exceptionelles laser proto, col {4+col_i*2}, line {99+row_i}, value: ", value)
+                        ws.cell(row=99 + row_i, column=4 + col_i*2).value = value  # shift left
+
+
+        except Exception as e:
+            printerUtil("Error while updating past data: ", e)
+            printerUtil("Past data was: ", self.pastData)
+            printerUtil("Continuing without updating past data.")
+
     def updateVersionTextes(self, ws):
         # write to F1 the last modified date of the exception report
         if self.exceptionReportLastModified != None:            
@@ -915,7 +1018,6 @@ class OutputFormatter:
 
             updateTime = datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).strftime("%Y-%m-%d %H:%M:%S")
             ws.cell(row=1, column=8).value = "Fichier mis à jour le: " + updateTime
-
 
     def createMRF(self, ws):
         #clear cells A39 to A45 and C39 to C45
@@ -956,9 +1058,6 @@ class OutputFormatter:
             monthFormula = monthFormula[:-3] + ")"
             ws.cell(row=39+i, column=3).value = monthFormula
 
-
-
-
     def createDetail(self, rootingIndex, protoIndex, isPostes, col, wb):
         
         
@@ -997,8 +1096,11 @@ class OutputFormatter:
         ws.cell(row=self.curentDetailRow, column=4).value = "Article : Client - Length x Width x Thickness" 
         ws.cell(row=self.curentDetailRow, column=5).value = "Postes" 
         ws.cell(row=self.curentDetailRow, column=6).value = "Tonnes" 
-        ws.cell(row=self.curentDetailRow, column=7).value = "Productivity" 
+        ws.cell(row=self.curentDetailRow, column=7).value = "Productivity (T/H)" 
         ws.cell(row=self.curentDetailRow, column=8).value = "Activer" 
+
+        # set Details text to hyperlink to go back to self.sourceHyperLinkCoord
+        ws.cell(row=self.curentDetailRow, column=3).hyperlink = f"#Resultats!{self.sourceHyperLinkCoord}"
 
         curentSubDetailRow = self.curentDetailRow + 1
        
@@ -1037,6 +1139,7 @@ class OutputFormatter:
             ws.cell(row=self.curentDetailRow, column=7).hyperlink = f"#Details2!C{self.SecondLevelDetailsOutputRunner}"
 
             ws.cell(row=self.curentDetailRow, column=8).value = 1
+            self.checkboxRows.append(self.curentDetailRow)
 
             self.createSecondLevelDetails(wb, productivity=round(float(row["Productivity"]), 2), generalDesc=newLines[rootingIndex] + " "+ protoText, specificDesc=self.productText)
 
@@ -1056,17 +1159,17 @@ class OutputFormatter:
         criteria_range_start = ws.cell(row=firstDetailRow, column=8).coordinate
         criteria_range_end = ws.cell(row=self.lastDetailRow, column=8).coordinate
         criteria_range = f"{criteria_range_start}:{criteria_range_end}"
+
+        actifCriteria = "1"
         
         # Sum of Postes (column 5) where Activer (column 8) = 1
-        ws.cell(row=curentSubDetailRow, column=3).value = f"=SUMIF({criteria_range},1,{sum_range})"
-        ws.cell(row=curentSubDetailRow, column=2).value = "Total Postes"
+        ws.cell(row=curentSubDetailRow, column=3).value = f"=CONCATENATE(\"Total Postes : \",SUMIF({criteria_range},{actifCriteria},{sum_range}))"
         
         # Sum of Tonnes (column 6) where Activer (column 8) = 1
         tonnes_range_start = ws.cell(row=firstDetailRow, column=6).coordinate
         tonnes_range_end = ws.cell(row=self.lastDetailRow, column=6).coordinate
         tonnes_range = f"{tonnes_range_start}:{tonnes_range_end}"
-        ws.cell(row=curentSubDetailRow+1, column=3).value = f"=SUMIF({criteria_range},1,{tonnes_range})"
-        ws.cell(row=curentSubDetailRow+1, column=2).value = "Total Tonnes"
+        ws.cell(row=curentSubDetailRow+1, column=3).value = f"=CONCATENATE(\"Total Tonnes : \",SUMIF({criteria_range},{actifCriteria},{tonnes_range}))"
         
         # Average productivity (weighted by postes)
         # SUMPRODUCT(productivity * postes) / SUM(postes)
@@ -1074,8 +1177,8 @@ class OutputFormatter:
         prod_range_end = ws.cell(row=self.lastDetailRow, column=7).coordinate
         prod_range = f"{prod_range_start}:{prod_range_end}"
         
-        ws.cell(row=curentSubDetailRow+2, column=3).value = f"=IF(COUNTIF({criteria_range},1)>0,AVERAGEIF({criteria_range},1,{prod_range}),0)"
-        ws.cell(row=curentSubDetailRow+2, column=2).value = "Average Productivity"
+        ws.cell(row=curentSubDetailRow+2, column=3).value = f'=CONCATENATE("Average Productivity : ",IF(COUNTIF({criteria_range},{actifCriteria})>0,AVERAGEIF({criteria_range},{actifCriteria},{prod_range}),0))'
+
 
 
 
@@ -1089,8 +1192,6 @@ class OutputFormatter:
         self.curentDetailRow=self.curentDetailRow+3
         if realOutput <= 3:
             self.curentDetailRow=self.start_block_row + 7
-
-
 
     def createSecondLevelDetails(self, wb, productivity, generalDesc, specificDesc):
         ws = wb["Details2"]
@@ -1243,28 +1344,28 @@ class OutputFormatter:
             ws.cell(row=r, column=3).fill = summary_fill
 
         # ===== Highlight Productivity max / min =====
-        tonnes_values = []
+        prod_values = []
 
         for r in range(start_row + 1, end_row + 1):
-            val = ws.cell(row=r, column=6).value
+            val = ws.cell(row=r, column=7).value
             if isinstance(val, (int, float)):
-                tonnes_values.append(val)
+                prod_values.append(val)
 
-        if tonnes_values:
-            max_tonnes = max(tonnes_values)
-            min_tonnes = min(tonnes_values)
+        if prod_values:
+            max_prod = max(prod_values)
+            min_prod = min(prod_values)
 
             for r in range(start_row + 1, end_row + 1):
-                cell = ws.cell(row=r, column=6)
+                cell = ws.cell(row=r, column=7)
 
-                if cell.value == min_tonnes:
-                    # color all line in red if min_tonnes, and set font to bold
+                if cell.value == min_prod:
+                    # color all line in red if min_prod, and set font to bold
                     for c in range(4, 8):
                         ws.cell(row=r, column=c).fill = min_fill
                         ws.cell(row=r, column=c).font = bold_font
 
-                if cell.value == max_tonnes:
-                    # color all line in green if max_tonnes, and set font to bold
+                if cell.value == max_prod:
+                    # color all line in green if max_prod, and set font to bold
                     for c in range(4, 8):
                         ws.cell(row=r, column=c).fill = max_fill
                         ws.cell(row=r, column=c).font = bold_font
@@ -1315,18 +1416,18 @@ class OutputFormatter:
         except Exception as e:
             printerUtil(f"Error occurred while updating version texts: {e}")
             
+        ws = wb["Details"]
 
 
         ws.sheet_view.selection[0].active_cell = "A1"
         ws.sheet_view.selection[0].sqref = "A1"
 
         try:
-            wb.save(self.template_path)
+            wb.save(str(self.template_path))
             printerUtil("Output file saved.")
         except Exception as e:
             printerUtil(f"Error occurred while saving output file: {e}")
         
-
     def get_week_month_proportions_workdays(self, start_week_offset, num_weeks):
         tz = pytz.timezone(CURENT_TIME_ZONE)
         today = datetime.now(tz).date()
@@ -1380,12 +1481,11 @@ class OutputFormatter:
 
 
 
-
 WINDOWS_REPORT_PATH = r"Reports\Report.xlsb"
 WINDOWS_ABAQUE_PATH = r"Abaque\Abaque 2025-2026.xlsx"
 WINDOWS_CACHE_FILE = r"Cache\articleCachedProductivities.txt"
 WINDOWS_DF_CACHE_FILE = r"Cache\Processed_Exception_report.xlsx"
-WINDOWS_OUTPUT_TEMPLATE = r"OutputTemplate.xlsm"
+WINDOWS_OUTPUT_TEMPLATE = r"ProductionDashboard.xlsm"
 
 
 LINUX_PREFIX = r"/home/Raftests/AMCS/bots_previsions/semaine_postes/"
@@ -1393,7 +1493,7 @@ LINUX_REPORT_PATH = r"Reports/Report.xlsb"
 LINUX_ABAQUE_PATH = r"Abaque/Abaque 2025-2026.xlsx"
 LINUX_CACHE_FILE = r"Cache/articleCachedProductivities.txt"
 LINUX_DF_CACHE_FILE = r"Cache/Processed_Exception_report.xlsx"
-LINUX_OUTPUT_TEMPLATE = r"OutputTemplate.xlsm"
+LINUX_OUTPUT_TEMPLATE = r"ProductionDashboard.xlsm"
 
 
 if os.name == 'nt':  # Windows
