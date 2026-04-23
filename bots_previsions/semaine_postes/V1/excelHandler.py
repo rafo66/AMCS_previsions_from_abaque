@@ -5,6 +5,8 @@ from openpyxl import chart
 import pandas as pd
 import time
 
+from pyparsing import col
+
 'Excel formatter dependecy'
 from openpyxl import load_workbook
 from openpyxl.styles import Font
@@ -627,6 +629,7 @@ class OutputFormatter:
         self.articleCachedProductivities = articleCachedProductivities
         self.checkboxRows = []
 
+        self.prodcockpitDF = pd.read_excel(r'C:\Users\Rafael\Desktop\bots\AMCS\bots_previsions\curentWeekViewer\SAP_DATA\PRODCOCKPIT_1_SEMAINE.XLSX', sheet_name="Sheet1")
 
 
         
@@ -650,6 +653,8 @@ class OutputFormatter:
             detailsSheet.column_dimensions['B'].width = 21
             detailsSheet.column_dimensions['C'].width = 42
             detailsSheet.column_dimensions['D'].width = 100
+            detailsSheet.column_dimensions['G'].width = 16
+            detailsSheet.column_dimensions['I'].width = 15
 
 
         if "Details2" in wb.sheetnames:
@@ -683,7 +688,7 @@ class OutputFormatter:
             lastWeekNumberCell = ws["D2"]
             self.curentWeekNumber = datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).isocalendar()[1]
             self.lastWeekNumber = int(lastWeekNumberCell.value.split("W")[1])
-            printerUtil("Last week number in template: ", self.lastWeekNumber, "Current week number: ", self.curentWeekNumber)
+            #printerUtil("Last week number in template: ", self.lastWeekNumber, "Current week number: ", self.curentWeekNumber)
             if self.lastWeekNumber != self.curentWeekNumber:
                 printerUtil("New week detected, updating week number in template to ", self.curentWeekNumber)
                 self.needsWeekUpdate = True
@@ -1091,6 +1096,9 @@ class OutputFormatter:
                 detailsText = "Forecast W" + str(weekNumber) + " "
 
 
+        isBackLogOrCurentWeek = "Backlog" in col or (detailsText.strip() == "Forecast W" + str(weekNumber))
+
+
         self.start_block_row = self.curentDetailRow
         ws.cell(row=self.curentDetailRow, column=3).value = "Details for : " + newLines[rootingIndex] + " "+ protoText + " - " + postesText + " " + detailsText
         ws.cell(row=self.curentDetailRow, column=4).value = "Article : Client - Length x Width x Thickness" 
@@ -1098,6 +1106,7 @@ class OutputFormatter:
         ws.cell(row=self.curentDetailRow, column=6).value = "Tonnes" 
         ws.cell(row=self.curentDetailRow, column=7).value = "Productivity (T/H)" 
         ws.cell(row=self.curentDetailRow, column=8).value = "Activer" 
+        ws.cell(row=self.curentDetailRow, column=9).value = "Déjà produit (%)" 
 
         # set Details text to hyperlink to go back to self.sourceHyperLinkCoord
         ws.cell(row=self.curentDetailRow, column=3).hyperlink = f"#Resultats!{self.sourceHyperLinkCoord}"
@@ -1117,7 +1126,17 @@ class OutputFormatter:
         firstDetailRow = -1
 
 
-        for index, row in potentialDetails.iterrows():
+        # add a column to potentialDetails with the percentage already produced for each line, using a for loop
+        potentialDetails = potentialDetails.copy()
+        potentialDetails["Pourcentage déjà produit"] = 0.0
+
+        for idx, detail_row in potentialDetails.iterrows():
+            potentialDetails.at[idx, "Pourcentage déjà produit"] = self.getPourcentageDejaProduit(
+            detail_row, col, isBackLogOrCurentWeek, isPostes, tonnesColName, detailsText
+            )
+
+
+        for index, row in potentialDetails.sort_values(by="Pourcentage déjà produit", ascending=False).iterrows():
             #if postes + tonnes = 0 then skip the line
             if float(row[tonnesColName]) == 0 and float(row[postesColName]) == 0:
                 continue
@@ -1139,6 +1158,7 @@ class OutputFormatter:
             ws.cell(row=self.curentDetailRow, column=7).hyperlink = f"#Details2!C{self.SecondLevelDetailsOutputRunner}"
 
             ws.cell(row=self.curentDetailRow, column=8).value = 1
+            ws.cell(row=self.curentDetailRow, column=9).value = row["Pourcentage déjà produit"] * 100 if row["Pourcentage déjà produit"] != 0 else 0
             self.checkboxRows.append(self.curentDetailRow)
 
             self.createSecondLevelDetails(wb, productivity=round(float(row["Productivity"]), 2), generalDesc=newLines[rootingIndex] + " "+ protoText, specificDesc=self.productText)
@@ -1150,37 +1170,61 @@ class OutputFormatter:
         self.lastDetailRow = self.curentDetailRow - 1
             
             
-        # sum if takes only start and end cell with a : 
-        # Get the range of cells for the sum
         sum_range_start = ws.cell(row=firstDetailRow, column=5).coordinate
         sum_range_end = ws.cell(row=self.lastDetailRow, column=5).coordinate
         sum_range = f"{sum_range_start}:{sum_range_end}"
-        
+
         criteria_range_start = ws.cell(row=firstDetailRow, column=8).coordinate
         criteria_range_end = ws.cell(row=self.lastDetailRow, column=8).coordinate
         criteria_range = f"{criteria_range_start}:{criteria_range_end}"
 
         actifCriteria = "1"
+
+        # Write clamped percent formula in hidden column K for each detail row
+        for row in range(firstDetailRow, self.lastDetailRow + 1):
+            source_cell = ws.cell(row=row, column=9).coordinate  # column I
+            ws.cell(row=row, column=11).value = f"=MIN(100,MAX(0,{source_cell}))"
+
+        # Hide column K
+        ws.column_dimensions["K"].hidden = True
+
+        # Point percent_range to column K
+        percent_range_start = ws.cell(row=firstDetailRow, column=11).coordinate
+        percent_range_end = ws.cell(row=self.lastDetailRow, column=11).coordinate
+        percent_range = f"{percent_range_start}:{percent_range_end}"
+
+        ws.cell(row=curentSubDetailRow, column=3).value = (
+            f'=CONCATENATE("Total Postes : ",'
+            f'SUMPRODUCT(({criteria_range}={actifCriteria})*{sum_range}*(1-{percent_range}/100)))'
+        )
+
+
+
+
         
-        # Sum of Postes (column 5) where Activer (column 8) = 1
-        ws.cell(row=curentSubDetailRow, column=3).value = f"=CONCATENATE(\"Total Postes : \",SUMIF({criteria_range},{actifCriteria},{sum_range}))"
         
         # Sum of Tonnes (column 6) where Activer (column 8) = 1
         tonnes_range_start = ws.cell(row=firstDetailRow, column=6).coordinate
         tonnes_range_end = ws.cell(row=self.lastDetailRow, column=6).coordinate
         tonnes_range = f"{tonnes_range_start}:{tonnes_range_end}"
-        ws.cell(row=curentSubDetailRow+1, column=3).value = f"=CONCATENATE(\"Total Tonnes : \",SUMIF({criteria_range},{actifCriteria},{tonnes_range}))"
-        
+        ws.cell(row=curentSubDetailRow+1, column=3).value = (
+            f'=CONCATENATE("Total Tonnes : ",'
+            f'SUMPRODUCT(({criteria_range}={actifCriteria})*{tonnes_range}*(1-{percent_range}/100)))'
+        )
+
+
         # Average productivity (weighted by postes)
         # SUMPRODUCT(productivity * postes) / SUM(postes)
         prod_range_start = ws.cell(row=firstDetailRow, column=7).coordinate
         prod_range_end = ws.cell(row=self.lastDetailRow, column=7).coordinate
         prod_range = f"{prod_range_start}:{prod_range_end}"
         
-        ws.cell(row=curentSubDetailRow+2, column=3).value = f'=CONCATENATE("Average Productivity : ",IF(COUNTIF({criteria_range},{actifCriteria})>0,AVERAGEIF({criteria_range},{actifCriteria},{prod_range}),0))'
-
-
-
+        ws.cell(row=curentSubDetailRow+2, column=3).value = (
+            f'=CONCATENATE("Average Productivity : ",'
+            f'IF(SUMPRODUCT(({criteria_range}={actifCriteria})*(1-{percent_range}/100))>0,'
+            f'SUMPRODUCT(({criteria_range}={actifCriteria})*{prod_range}*(1-{percent_range}/100))'
+            f'/SUMPRODUCT(({criteria_range}={actifCriteria})*(1-{percent_range}/100)),0))'
+        )
 
 
         self.end_block_row = self.curentDetailRow - 1
@@ -1193,6 +1237,83 @@ class OutputFormatter:
         if realOutput <= 3:
             self.curentDetailRow=self.start_block_row + 7
 
+    def getPourcentageDejaProduit(self, row, col, isBackLogOrCurentWeek, isPostes, tonnesColName, detailsText):     
+        '''if str(row["Material"]) == "8032518":
+            self.curentMaterialDF = self.prodcockpitDF[self.prodcockpitDF["Article"] == row["Material"]]
+            # get sum of tonnes produced for this article in the prodcockpitDF
+            tonnes_produced = self.curentMaterialDF["Poids Net"].sum() /1000  # convert from kg to tonnes
+        '''
+            
+
+        '''printerUtil("Calculating pourcentage deja produit for row: ", row, " col: ", col, " isBackLogOrCurentWeek: ", isBackLogOrCurentWeek, " isPostes: ", isPostes)
+            printerUtil(self.curentMaterialDF.head())
+            printerUtil("Tonnes produced for article ", row["Material"], ": ", tonnes_produced, " tonnes, forecasted tonnes: ", row[tonnesColName])
+            printerUtil("Calculating pourcentage deja produit for article 8032518, row: ", row)
+            printerUtil("curentMaterialDF: ", self.curentMaterialDF)'''
+
+
+            
+
+        try:
+            self.curentMaterialDF = self.prodcockpitDF[self.prodcockpitDF["Article"] == row["Material"]]
+            # get sum of tonnes produced for this article in the prodcockpitDF
+            tonnes_produced = self.curentMaterialDF["Poids Net"].sum() /1000  # convert from kg to tonnes
+
+            if "Backlog" in col:
+                pourcentage = round(float(tonnes_produced) / float(row[tonnesColName]), 2) if row[tonnesColName] != 0 else 0
+            else:
+                tonnesDeReferencePourWeekCible = row[tonnesColName]
+                weekCibleIndex = int(detailsText.split("W")[1])
+                self.curentWeekNumber = datetime.now(__import__("zoneinfo").ZoneInfo(CURENT_TIME_ZONE)).isocalendar()[1]
+                for weeksToSubstract in range(0, weekCibleIndex - self.curentWeekNumber + 1):
+                    if weeksToSubstract == 0:
+                        # substract backlog if needed
+                        tonnesWeekOffsetColumnName = "Backlog"
+                        tonnesWeekOffset = self.df[(self.df["Material"].astype(str) == str(row["Material"]))][tonnesWeekOffsetColumnName].sum() if tonnesWeekOffsetColumnName in self.df.columns else 0
+                    if weeksToSubstract > 0:
+                        tonnesWeekOffsetColumnName = "Forecast W" if weeksToSubstract == 1 else "Forecast W"+str(weeksToSubstract-1)
+
+                    # find all article in potentialDetails that have the same routing and proto and that have a forecast for the week to substract, and sum their tonnes for that week
+                    columnsToSum = ["Backlog (Postes)", "Backlog", "Forecast W (Postes)", "Forecast W", "Forecast W1 (Postes)", "Forecast W1", "Forecast W2 (Postes)", "Forecast W2", "Forecast W3 (Postes)", "Forecast W3", "Forecast W4 (Postes)", "Forecast W4", "Forecast W5 (Postes)", "Forecast W5", "Forecast W6 (Postes)", "Forecast W6", "Forecast W7 (Postes)", "Forecast W7", "Forecast W8 (Postes)", "Forecast W8"]
+                    summary = self.df.groupby(["New Routing", "Is Proto"]).agg({col: "sum" for col in columnsToSum}).reset_index()
+                    # take the week of the column to substract
+                    try:
+                        same_articles_df = self.df[self.df["Material"].astype(str) == str(row["Material"])].copy()
+                        if tonnesWeekOffsetColumnName in same_articles_df.columns:
+                            tonnesWeekOffset = same_articles_df[tonnesWeekOffsetColumnName].sum()
+                    except Exception as e:
+                        printerUtil("Error while calculating tonnesWeekOffset for column ", tonnesWeekOffsetColumnName, ": ", e)
+                        printerUtil("summary dataframe was: ", summary)
+                        printerUtil("row was: ", row)
+                        printerUtil("Continuing with tonnesWeekOffset = 0")
+                        tonnesWeekOffset = 0
+                        
+
+
+                    if tonnes_produced - tonnesWeekOffset > 0:
+                        tonnes_produced = tonnes_produced - tonnesWeekOffset
+                
+                pourcentage = round(float(tonnes_produced) / float(tonnesDeReferencePourWeekCible), 2) if tonnesDeReferencePourWeekCible != 0 else 0
+                #printerUtil("!!!! Calculating pourcentage deja produit for article ", row["Material"], ": tonnes produced: ", tonnes_produced, " reference tonnes for week cible: ", tonnesDeReferencePourWeekCible, " pourcentage: ", pourcentage)
+
+
+            #if pourcentage > 1:
+            #printerUtil("Warning: pourcentage deja produit is greater than 100% for article ", row["Material"], " tonnes_produced: ", tonnes_produced, " forecasted tonnes: ", row[tonnesColName])
+            #printerUtil(str(row["Material"]),"8052108")
+            #pourcentage = 1
+
+            if pourcentage < 0:
+                pourcentage = 0
+
+            #if pourcentage > 0:
+            #printerUtil("Calculated pourcentage deja produit for article ", row["Material"], ": ", pourcentage, "% (", tonnes_produced, " tonnes produced / ", row[tonnesColName], " forecasted tonnes)")
+
+
+            return pourcentage
+        except Exception as e:
+            printerUtil("Error while calculating pourcentage deja produit: ", e)
+            return 0
+    
     def createSecondLevelDetails(self, wb, productivity, generalDesc, specificDesc):
         ws = wb["Details2"]
 
@@ -1319,7 +1440,7 @@ class OutputFormatter:
         summary_fill = PatternFill("solid", fgColor="F2F2F2")
         max_fill = PatternFill("solid", fgColor="C6EFCE")
         min_fill = PatternFill("solid", fgColor="FFC7CE")
-        headerLengh = 9
+        headerLengh = 10
 
         bold_font = Font(bold=True)
 
